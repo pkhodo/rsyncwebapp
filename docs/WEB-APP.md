@@ -12,6 +12,7 @@ http://rsync.localhost:8787
 
 - Overview
 - Jobs
+- Locations
 - Job Builder
 - Logs & Diagnostics
 - Setup & Updates
@@ -119,6 +120,7 @@ Windows one-click starter:
 11. Use **Copy Diagnostics** in the header when you need a full state snapshot for debugging/support.
 12. Use **Check Updates** in the header and **Update App** in Setup Center for one-click upgrade flow.
 13. Automatic update checks run at most once per week per browser profile.
+14. Use **Locations** to manage reusable remote/local profiles and compose jobs in bulk.
 
 ## Editor Modes
 
@@ -150,6 +152,8 @@ When **Pause Auto-Sync** is enabled:
 
 - Job profiles: `profiles/jobs.json` (local)
 - Example profile: `profiles/jobs.example.json`
+- Location profiles: `profiles/locations.json` (local)
+- Example locations: `profiles/locations.example.json`
 - Service state: `state/`
 - Logs: `state/logs/`
 - Metadata DB: `state/rsync-webapp.db`
@@ -158,10 +162,18 @@ When **Pause Auto-Sync** is enabled:
 
 - `GET /api/health`
 - `GET /api/jobs`
+- `GET /api/locations`
 - `POST /api/jobs/preview-command`
 - `POST /api/jobs`
+- `POST /api/locations/remote`
+- `POST /api/locations/local`
+- `POST /api/locations/compose`
 - `PUT /api/jobs/{id}`
+- `PUT /api/locations/remote/{id}`
+- `PUT /api/locations/local/{id}`
 - `DELETE /api/jobs/{id}`
+- `DELETE /api/locations/remote/{id}`
+- `DELETE /api/locations/local/{id}`
 - `POST /api/jobs/{id}/start`
 - `POST /api/jobs/{id}/dry-run`
 - `POST /api/jobs/{id}/pause`

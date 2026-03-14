@@ -6,6 +6,7 @@ state/*.json
 
 # Local user configuration
 profiles/jobs.json
+profiles/locations.json
 
 # Python cache
 __pycache__/

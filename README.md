@@ -23,7 +23,7 @@ cd rsyncwebapp
 ```
 
 3. Open `http://rsync.localhost:8787`
-4. In the UI, complete **First-Run Wizard** and create your first job.
+4. In the UI, complete **First-Run Wizard** and optionally define reusable profiles in **Locations** before creating jobs.
 
 ## Highlights
 
@@ -31,6 +31,7 @@ cd rsyncwebapp
 - Multi-screen console layout:
   - Overview
   - Jobs
+  - Locations
   - Job Builder
   - Logs & Diagnostics
   - Setup & Updates
@@ -39,6 +40,10 @@ cd rsyncwebapp
   - `Terminal` (hacker-style, high contrast)
   - `Fancy` (clean, Apple-like, minimal)
 - Dry run, delete preview, test connection
+- Location Manager:
+  - reusable remote locations
+  - reusable local locations
+  - matrix/zip composition to create many jobs fast
 - Pause/resume/cancel/start controls
 - Auto-retry when network/SSH is unavailable
 - Global service pause (`Pause Auto-Sync`) for ZTNA downtime periods
@@ -70,6 +75,11 @@ After opening the UI once, use **First-Run Wizard** and **Setup Center**:
 - Windows: dependencies, desktop shortcuts, and one-click quickstart
 
 Use **Copy Diagnostics** in the top action bar if you need to share service state/log context.
+
+Use **Locations** when you manage many servers/paths:
+- save remote and local profiles once
+- compose jobs in `matrix` or `zip` mode
+- preview combinations before creating jobs
 
 You can also run installers directly from `bin/` if preferred.
 

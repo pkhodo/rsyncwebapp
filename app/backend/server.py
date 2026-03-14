@@ -30,6 +30,7 @@ FRONTEND_DIR = ROOT / "app" / "frontend"
 STATE_DIR = ROOT / "state"
 LOG_DIR = STATE_DIR / "logs"
 PROFILE_PATH = ROOT / "profiles" / "jobs.json"
+LOCATIONS_PATH = ROOT / "profiles" / "locations.json"
 DB_PATH = STATE_DIR / "rsync-webapp.db"
 SETTINGS_PATH = STATE_DIR / "service-settings.json"
 BIN_DIR = ROOT / "bin"
@@ -51,6 +52,11 @@ def parse_shell_list(value: str) -> list[str]:
     return items
 
 
+def slugify(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
+    return cleaned[:48] or str(uuid.uuid4())[:8]
+
+
 def read_app_version() -> str:
     try:
         payload = json.loads(PACKAGE_JSON_PATH.read_text(encoding="utf-8"))
@@ -69,6 +75,76 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
     minor = int(digits[1]) if len(digits) > 1 else 0
     patch = int(digits[2]) if len(digits) > 2 else 0
     return (major, minor, patch)
+
+
+def _validate_remote_server(value: str) -> str:
+    server = str(value).strip()
+    if not server:
+        raise RuntimeError("Remote server is required")
+    if server.startswith("/") or " " in server:
+        raise RuntimeError("server must be an SSH host target like user@host")
+    return server
+
+
+def _validate_remote_path(value: str) -> str:
+    path = str(value).strip()
+    if not path:
+        raise RuntimeError("Remote path is required")
+    if not path.startswith("/"):
+        raise RuntimeError("remote_path must be absolute on remote host")
+    if ":" in path:
+        raise RuntimeError("remote_path must not contain ':'")
+    parts = [part for part in path.split("/") if part]
+    if ".." in parts:
+        raise RuntimeError("remote_path must not include '..'")
+    return path
+
+
+def _validate_local_path(value: str) -> str:
+    path = str(value).strip()
+    if not path:
+        raise RuntimeError("Local path is required")
+    if not path.startswith("/"):
+        raise RuntimeError("local_path must be an absolute local path")
+    if ":" in path:
+        raise RuntimeError("local_path must not contain ':'")
+    parts = [part for part in path.split("/") if part]
+    if ".." in parts:
+        raise RuntimeError("local_path must not include '..'")
+    return path
+
+
+def normalize_remote_location_payload(payload: dict[str, Any]) -> dict[str, str]:
+    name = str(payload.get("name", "")).strip()
+    if not name:
+        raise RuntimeError("Remote location name is required")
+    location_id = str(payload.get("id") or slugify(name)).strip()
+    if not location_id:
+        raise RuntimeError("Remote location id is required")
+    notes = str(payload.get("notes", "")).strip()
+    return {
+        "id": slugify(location_id),
+        "name": name,
+        "server": _validate_remote_server(str(payload.get("server", ""))),
+        "remote_path": _validate_remote_path(str(payload.get("remote_path", ""))),
+        "notes": notes,
+    }
+
+
+def normalize_local_location_payload(payload: dict[str, Any]) -> dict[str, str]:
+    name = str(payload.get("name", "")).strip()
+    if not name:
+        raise RuntimeError("Local location name is required")
+    location_id = str(payload.get("id") or slugify(name)).strip()
+    if not location_id:
+        raise RuntimeError("Local location id is required")
+    notes = str(payload.get("notes", "")).strip()
+    return {
+        "id": slugify(location_id),
+        "name": name,
+        "local_path": _validate_local_path(str(payload.get("local_path", ""))),
+        "notes": notes,
+    }
 
 
 def _run_capture(args: list[str]) -> tuple[int, str]:
@@ -808,9 +884,14 @@ class JobControl:
 class AppState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._locations_lock = threading.Lock()
         self.started_at = now_iso()
         self.history = HistoryStore(DB_PATH)
         self.jobs: dict[str, JobControl] = {}
+        self._locations: dict[str, list[dict[str, str]]] = {
+            "remote_locations": [],
+            "local_locations": [],
+        }
         self._service_pause = False
         self._connectivity_lock = threading.Lock()
         self._connectivity_cache: dict[str, dict[str, Any]] = {}
@@ -820,6 +901,7 @@ class AppState:
         self._stop_callback: Any = None
         self._load_settings()
         self._load_jobs()
+        self._load_locations()
 
     def _load_settings(self) -> None:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -868,9 +950,220 @@ class AppState:
             payload = {"jobs": [asdict(job.config) for job in self.jobs.values()]}
         PROFILE_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
+    def _load_locations(self) -> None:
+        PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if not LOCATIONS_PATH.exists():
+            LOCATIONS_PATH.write_text(
+                json.dumps({"remote_locations": [], "local_locations": []}, indent=2),
+                encoding="utf-8",
+            )
+        payload = json.loads(LOCATIONS_PATH.read_text(encoding="utf-8"))
+        remotes: list[dict[str, str]] = []
+        locals_: list[dict[str, str]] = []
+        for item in payload.get("remote_locations", []):
+            try:
+                remotes.append(normalize_remote_location_payload(item))
+            except Exception:
+                continue
+        for item in payload.get("local_locations", []):
+            try:
+                locals_.append(normalize_local_location_payload(item))
+            except Exception:
+                continue
+        with self._locations_lock:
+            self._locations = {
+                "remote_locations": remotes,
+                "local_locations": locals_,
+            }
+
+    def _save_locations(self) -> None:
+        with self._locations_lock:
+            payload = {
+                "remote_locations": self._locations["remote_locations"],
+                "local_locations": self._locations["local_locations"],
+            }
+        LOCATIONS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
     def list_jobs(self) -> list[dict[str, Any]]:
         with self._lock:
             return [job.serialize() for job in self.jobs.values()]
+
+    def list_locations(self) -> dict[str, Any]:
+        with self._locations_lock:
+            remotes = sorted(self._locations["remote_locations"], key=lambda item: item["name"].lower())
+            locals_ = sorted(self._locations["local_locations"], key=lambda item: item["name"].lower())
+        return {
+            "remote_locations": remotes,
+            "local_locations": locals_,
+            "checked_at": now_iso(),
+        }
+
+    def _dedupe_location_id(self, kind: str, location_id: str) -> str:
+        with self._locations_lock:
+            existing = {item["id"] for item in self._locations[kind]}
+        if location_id not in existing:
+            return location_id
+        base = location_id
+        counter = 2
+        while f"{base}-{counter}" in existing:
+            counter += 1
+        return f"{base}-{counter}"
+
+    def create_location(self, kind: str, payload: dict[str, Any]) -> dict[str, str]:
+        if kind not in {"remote_locations", "local_locations"}:
+            raise RuntimeError("Unknown location kind")
+        normalized = (
+            normalize_remote_location_payload(payload)
+            if kind == "remote_locations"
+            else normalize_local_location_payload(payload)
+        )
+        normalized["id"] = self._dedupe_location_id(kind, normalized["id"])
+        with self._locations_lock:
+            self._locations[kind].append(normalized)
+        self._save_locations()
+        return normalized
+
+    def update_location(self, kind: str, location_id: str, payload: dict[str, Any]) -> dict[str, str]:
+        if kind not in {"remote_locations", "local_locations"}:
+            raise RuntimeError("Unknown location kind")
+        with self._locations_lock:
+            current = next((item for item in self._locations[kind] if item["id"] == location_id), None)
+        if not current:
+            raise KeyError(f"Unknown location: {location_id}")
+        merged = dict(current)
+        merged.update(payload)
+        merged["id"] = location_id
+        normalized = (
+            normalize_remote_location_payload(merged)
+            if kind == "remote_locations"
+            else normalize_local_location_payload(merged)
+        )
+        normalized["id"] = location_id
+        with self._locations_lock:
+            next_items = [
+                normalized if item["id"] == location_id else item
+                for item in self._locations[kind]
+            ]
+            self._locations[kind] = next_items
+        self._save_locations()
+        return normalized
+
+    def delete_location(self, kind: str, location_id: str) -> None:
+        if kind not in {"remote_locations", "local_locations"}:
+            raise RuntimeError("Unknown location kind")
+        with self._locations_lock:
+            current = next((item for item in self._locations[kind] if item["id"] == location_id), None)
+        if not current:
+            raise KeyError(f"Unknown location: {location_id}")
+        jobs = self.list_jobs()
+        if kind == "remote_locations":
+            in_use = any(
+                job["config"]["server"] == current["server"]
+                and job["config"]["remote_path"] == current["remote_path"]
+                for job in jobs
+            )
+            if in_use:
+                raise RuntimeError("Cannot delete remote location used by existing jobs")
+        else:
+            in_use = any(job["config"]["local_path"] == current["local_path"] for job in jobs)
+            if in_use:
+                raise RuntimeError("Cannot delete local location used by existing jobs")
+        with self._locations_lock:
+            self._locations[kind] = [item for item in self._locations[kind] if item["id"] != location_id]
+        self._save_locations()
+
+    def compose_locations(self, payload: dict[str, Any]) -> dict[str, Any]:
+        remote_ids = [str(item).strip() for item in payload.get("remote_ids", []) if str(item).strip()]
+        local_ids = [str(item).strip() for item in payload.get("local_ids", []) if str(item).strip()]
+        if not remote_ids or not local_ids:
+            raise RuntimeError("Select at least one remote and one local location")
+        pair_mode = str(payload.get("pair_mode", "matrix")).strip().lower()
+        if pair_mode not in {"matrix", "zip"}:
+            raise RuntimeError("pair_mode must be 'matrix' or 'zip'")
+
+        with self._locations_lock:
+            remotes_by_id = {item["id"]: item for item in self._locations["remote_locations"]}
+            locals_by_id = {item["id"]: item for item in self._locations["local_locations"]}
+        missing_remotes = [item for item in remote_ids if item not in remotes_by_id]
+        missing_locals = [item for item in local_ids if item not in locals_by_id]
+        if missing_remotes or missing_locals:
+            missing = sorted(set(missing_remotes + missing_locals))
+            raise RuntimeError(f"Unknown location ids: {', '.join(missing)}")
+
+        remotes = [remotes_by_id[item] for item in remote_ids]
+        locals_ = [locals_by_id[item] for item in local_ids]
+        pairs: list[tuple[dict[str, str], dict[str, str]]] = []
+        if pair_mode == "matrix":
+            for remote in remotes:
+                for local_item in locals_:
+                    pairs.append((remote, local_item))
+        else:
+            if len(remotes) != len(locals_):
+                raise RuntimeError("zip mode requires the same number of remotes and locals")
+            pairs = list(zip(remotes, locals_))
+
+        defaults = payload.get("defaults", {})
+        if not isinstance(defaults, dict):
+            defaults = {}
+        create = bool(payload.get("create", False))
+        name_template = str(payload.get("name_template", "{remote_name} -> {local_name}")).strip()
+        if not name_template:
+            name_template = "{remote_name} -> {local_name}"
+
+        preview_jobs: list[dict[str, Any]] = []
+        created_jobs: list[dict[str, Any]] = []
+        errors: list[str] = []
+
+        for index, (remote, local_item) in enumerate(pairs, start=1):
+            try:
+                name = name_template.format(
+                    remote_id=remote["id"],
+                    remote_name=remote["name"],
+                    local_id=local_item["id"],
+                    local_name=local_item["name"],
+                    index=index,
+                )
+            except KeyError:
+                name = f"{remote['name']} -> {local_item['name']}"
+            base_payload: dict[str, Any] = {
+                "id": f"{slugify(remote['name'])}-{slugify(local_item['name'])}-{index}",
+                "name": name,
+                "server": remote["server"],
+                "remote_path": remote["remote_path"],
+                "local_path": local_item["local_path"],
+                "mode": str(defaults.get("mode", "append")),
+                "mirror_confirmed": bool(defaults.get("mirror_confirmed", False)),
+                "dry_run": bool(defaults.get("dry_run", True)),
+                "auto_retry": bool(defaults.get("auto_retry", True)),
+                "timeout_seconds": int(defaults.get("timeout_seconds", 60)),
+                "contimeout_seconds": int(defaults.get("contimeout_seconds", 15)),
+                "retry_initial_seconds": int(defaults.get("retry_initial_seconds", 10)),
+                "retry_max_seconds": int(defaults.get("retry_max_seconds", 300)),
+                "bwlimit_kbps": int(defaults.get("bwlimit_kbps", 0)),
+                "nice_level": int(defaults.get("nice_level", 0)),
+                "allowed_start_hour": int(defaults.get("allowed_start_hour", -1)),
+                "allowed_end_hour": int(defaults.get("allowed_end_hour", -1)),
+                "excludes": defaults.get("excludes", []),
+                "extra_args": defaults.get("extra_args", []),
+            }
+            try:
+                normalized = normalize_job_payload(base_payload)
+                preview_jobs.append(normalized)
+                if create:
+                    created_jobs.append(self.create(normalized))
+            except Exception as exc:
+                errors.append(f"{remote['name']} -> {local_item['name']}: {exc}")
+
+        return {
+            "pair_mode": pair_mode,
+            "create": create,
+            "pairs_total": len(pairs),
+            "preview_jobs": preview_jobs,
+            "created_jobs": created_jobs,
+            "created_count": len(created_jobs),
+            "errors": errors,
+            "generated_at": now_iso(),
+        }
 
     def get(self, job_id: str) -> JobControl:
         with self._lock:
@@ -1002,6 +1295,7 @@ class AppState:
             "system_checks": self.system_checks(),
             "connectivity": self.get_connectivity(force=False),
             "onboarding": self.onboarding_status(),
+            "locations": self.list_locations(),
             "jobs": jobs_snapshot,
             "service_logs": self.service_logs(tail=120),
             "job_logs": job_logs,
@@ -1620,6 +1914,9 @@ class RequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/jobs":
             self._send_json({"ok": True, "jobs": self.app_state.list_jobs()})
             return
+        if path == "/api/locations":
+            self._send_json({"ok": True, "locations": self.app_state.list_locations()})
+            return
         if path == "/api/connectivity":
             query = parse_qs(parsed.query)
             force = query.get("force", ["0"])[0] == "1"
@@ -1669,6 +1966,21 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 payload = self._read_json()
                 item = self.app_state.create(payload)
                 self._send_json({"ok": True, "job": item}, status=201)
+                return
+            if path == "/api/locations/remote":
+                payload = self._read_json()
+                item = self.app_state.create_location("remote_locations", payload)
+                self._send_json({"ok": True, "location": item}, status=201)
+                return
+            if path == "/api/locations/local":
+                payload = self._read_json()
+                item = self.app_state.create_location("local_locations", payload)
+                self._send_json({"ok": True, "location": item}, status=201)
+                return
+            if path == "/api/locations/compose":
+                payload = self._read_json()
+                result = self.app_state.compose_locations(payload)
+                self._send_json({"ok": True, "result": result}, status=200)
                 return
             if path == "/api/service/pause-auto":
                 result = self.app_state.set_service_paused(True)
@@ -1751,6 +2063,28 @@ class RequestHandler(SimpleHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._error(str(exc), status=400)
             return
+        if path.startswith("/api/locations/remote/"):
+            location_id = path.split("/")[4]
+            try:
+                payload = self._read_json()
+                item = self.app_state.update_location("remote_locations", location_id, payload)
+                self._send_json({"ok": True, "location": item})
+            except KeyError as exc:
+                self._error(str(exc), status=404)
+            except Exception as exc:  # noqa: BLE001
+                self._error(str(exc), status=400)
+            return
+        if path.startswith("/api/locations/local/"):
+            location_id = path.split("/")[4]
+            try:
+                payload = self._read_json()
+                item = self.app_state.update_location("local_locations", location_id, payload)
+                self._send_json({"ok": True, "location": item})
+            except KeyError as exc:
+                self._error(str(exc), status=404)
+            except Exception as exc:  # noqa: BLE001
+                self._error(str(exc), status=400)
+            return
         self._error("Unknown endpoint", status=404)
 
     def do_DELETE(self) -> None:  # noqa: N802
@@ -1763,6 +2097,26 @@ class RequestHandler(SimpleHTTPRequestHandler):
             job_id = path.split("/")[3]
             try:
                 self.app_state.delete(job_id)
+                self._send_json({"ok": True})
+            except KeyError as exc:
+                self._error(str(exc), status=404)
+            except Exception as exc:  # noqa: BLE001
+                self._error(str(exc), status=400)
+            return
+        if path.startswith("/api/locations/remote/"):
+            location_id = path.split("/")[4]
+            try:
+                self.app_state.delete_location("remote_locations", location_id)
+                self._send_json({"ok": True})
+            except KeyError as exc:
+                self._error(str(exc), status=404)
+            except Exception as exc:  # noqa: BLE001
+                self._error(str(exc), status=400)
+            return
+        if path.startswith("/api/locations/local/"):
+            location_id = path.split("/")[4]
+            try:
+                self.app_state.delete_location("local_locations", location_id)
                 self._send_json({"ok": True})
             except KeyError as exc:
                 self._error(str(exc), status=404)

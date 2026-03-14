@@ -345,6 +345,75 @@ body {
   gap: 8px;
 }
 
+.location-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 10px;
+}
+
+.location-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.location-card h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.location-form {
+  display: grid;
+  gap: 8px;
+}
+
+.location-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.location-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.location-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.location-item-title {
+  font-weight: 650;
+  font-size: 12px;
+}
+
+.location-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.location-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.location-item-actions button {
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
 .wizard-step,
 .setup-card {
   border: 1px solid var(--line);
@@ -700,6 +769,10 @@ body[data-editor-mode="advanced"] .field-expert {
 
   .job-actions {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .location-grid {
+    grid-template-columns: 1fr;
   }
 }
 

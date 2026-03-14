@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.0] - 2026-03-14
+
+### Added
+- Location Manager screen with reusable remote/local profile libraries.
+- Location compose engine (`matrix` and `zip` modes) to preview/create many jobs at once.
+- Location APIs:
+  - `GET /api/locations`
+  - `POST /api/locations/remote`
+  - `POST /api/locations/local`
+  - `PUT /api/locations/remote/{id}`
+  - `PUT /api/locations/local/{id}`
+  - `DELETE /api/locations/remote/{id}`
+  - `DELETE /api/locations/local/{id}`
+  - `POST /api/locations/compose`
+- Example location profile file: `profiles/locations.example.json`.
+
+### Changed
+- Information architecture expanded to include dedicated `Locations` navigation area.
+- Diagnostics payload now includes location profile state.
+
+### Safety
+- Location payload validation enforces absolute paths and one-way-safe host/path constraints.
+- In-use location deletion is blocked when referenced by existing jobs.
+
 ## [0.3.1] - 2026-03-14
 
 ### Added

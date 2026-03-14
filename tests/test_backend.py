@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import cast
@@ -80,6 +81,25 @@ class ValidationTests(unittest.TestCase):
         payload["extra_args"] = ["--remove-source-files"]
         with self.assertRaises(RuntimeError):
             server.normalize_job_payload(payload)
+
+    def test_remote_location_requires_absolute_path(self):
+        with self.assertRaises(RuntimeError):
+            server.normalize_remote_location_payload(
+                {
+                    "name": "Remote",
+                    "server": "user@example-host",
+                    "remote_path": "relative/path",
+                }
+            )
+
+    def test_local_location_requires_absolute_path(self):
+        with self.assertRaises(RuntimeError):
+            server.normalize_local_location_payload(
+                {
+                    "name": "Local",
+                    "local_path": "relative/path",
+                }
+            )
 
 
 class CommandBuildTests(unittest.TestCase):
@@ -166,6 +186,79 @@ class LifecycleReplayTests(unittest.TestCase):
                 self.assertEqual(job.runtime.status, "completed")
                 self.assertEqual(job.runtime.retries, 1)
                 self.assertGreaterEqual(job.runtime.attempts, 2)
+
+
+class LocationComposeTests(unittest.TestCase):
+    def test_compose_matrix_preview(self):
+        app_state = object.__new__(server.AppState)
+        app_state._locations_lock = threading.Lock()
+        app_state._locations = {
+            "remote_locations": [
+                {
+                    "id": "prod-media",
+                    "name": "Prod Media",
+                    "server": "user@prod",
+                    "remote_path": "/srv/media",
+                    "notes": "",
+                },
+                {
+                    "id": "prod-private",
+                    "name": "Prod Private",
+                    "server": "user@prod",
+                    "remote_path": "/srv/private",
+                    "notes": "",
+                },
+            ],
+            "local_locations": [
+                {
+                    "id": "dev-files",
+                    "name": "Dev Files",
+                    "local_path": "/tmp/dev-files",
+                    "notes": "",
+                }
+            ],
+        }
+        result = app_state.compose_locations(
+            {
+                "remote_ids": ["prod-media", "prod-private"],
+                "local_ids": ["dev-files"],
+                "pair_mode": "matrix",
+                "create": False,
+                "defaults": {"mode": "append", "dry_run": True},
+            }
+        )
+        self.assertEqual(result["pairs_total"], 2)
+        self.assertEqual(len(result["preview_jobs"]), 2)
+        self.assertEqual(result["created_count"], 0)
+        self.assertEqual(result["errors"], [])
+
+    def test_compose_zip_requires_equal_counts(self):
+        app_state = object.__new__(server.AppState)
+        app_state._locations_lock = threading.Lock()
+        app_state._locations = {
+            "remote_locations": [
+                {
+                    "id": "prod-media",
+                    "name": "Prod Media",
+                    "server": "user@prod",
+                    "remote_path": "/srv/media",
+                    "notes": "",
+                }
+            ],
+            "local_locations": [
+                {"id": "a", "name": "A", "local_path": "/tmp/a", "notes": ""},
+                {"id": "b", "name": "B", "local_path": "/tmp/b", "notes": ""},
+            ],
+        }
+        with self.assertRaises(RuntimeError):
+            app_state.compose_locations(
+                {
+                    "remote_ids": ["prod-media"],
+                    "local_ids": ["a", "b"],
+                    "pair_mode": "zip",
+                    "create": False,
+                }
+            )
 
 
 if __name__ == "__main__":

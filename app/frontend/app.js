@@ -39,6 +39,34 @@ const elements = {
   refreshWizardBtn: document.getElementById("refreshWizardBtn"),
   previewCommandBtn: document.getElementById("previewCommandBtn"),
   commandPreviewEl: document.getElementById("commandPreview"),
+  refreshLocationsBtn: document.getElementById("refreshLocationsBtn"),
+  remoteLocationForm: document.getElementById("remoteLocationForm"),
+  remoteLocationId: document.getElementById("remoteLocationId"),
+  remoteLocationName: document.getElementById("remoteLocationName"),
+  remoteLocationServer: document.getElementById("remoteLocationServer"),
+  remoteLocationPath: document.getElementById("remoteLocationPath"),
+  remoteLocationNotes: document.getElementById("remoteLocationNotes"),
+  remoteLocationClearBtn: document.getElementById("remoteLocationClearBtn"),
+  remoteLocationsList: document.getElementById("remoteLocationsList"),
+  localLocationForm: document.getElementById("localLocationForm"),
+  localLocationId: document.getElementById("localLocationId"),
+  localLocationName: document.getElementById("localLocationName"),
+  localLocationPath: document.getElementById("localLocationPath"),
+  localLocationNotes: document.getElementById("localLocationNotes"),
+  localLocationClearBtn: document.getElementById("localLocationClearBtn"),
+  localLocationsList: document.getElementById("localLocationsList"),
+  composeRemoteIds: document.getElementById("composeRemoteIds"),
+  composeLocalIds: document.getElementById("composeLocalIds"),
+  composePairMode: document.getElementById("composePairMode"),
+  composeNameTemplate: document.getElementById("composeNameTemplate"),
+  composeJobMode: document.getElementById("composeJobMode"),
+  composeDryRun: document.getElementById("composeDryRun"),
+  composeAutoRetry: document.getElementById("composeAutoRetry"),
+  composeMirrorConfirmed: document.getElementById("composeMirrorConfirmed"),
+  usePairInBuilderBtn: document.getElementById("usePairInBuilderBtn"),
+  previewComposeBtn: document.getElementById("previewComposeBtn"),
+  createComposeBtn: document.getElementById("createComposeBtn"),
+  composeOutput: document.getElementById("composeOutput"),
   editorModeButtons: document.querySelectorAll(".mode-btn[data-editor-mode]"),
   navButtons: document.querySelectorAll(".nav-btn[data-view]"),
   viewPanels: document.querySelectorAll(".view[data-view-panel]"),
@@ -63,6 +91,7 @@ const ui = createUI(elements, STORAGE_KEYS);
 let currentLogJobId = null;
 let currentHistoryJobId = null;
 let jobsCache = [];
+let locationsCache = { remote_locations: [], local_locations: [] };
 let lastConnectivity = null;
 let lastOnboarding = null;
 let servicePause = false;
@@ -97,7 +126,7 @@ function bootEditorMode() {
 }
 
 function setView(viewKey, persist = true) {
-  const allowed = new Set(["overview", "jobs", "builder", "logs", "setup"]);
+  const allowed = new Set(["overview", "jobs", "locations", "builder", "logs", "setup"]);
   const next = allowed.has(viewKey) ? viewKey : "overview";
   elements.viewPanels.forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.viewPanel === next);
@@ -268,6 +297,143 @@ async function refreshOnboarding() {
   }
 }
 
+function getSelectedValues(selectEl) {
+  return Array.from(selectEl.selectedOptions).map((option) => option.value);
+}
+
+function setRemoteForm(item = null) {
+  elements.remoteLocationId.value = item?.id || "";
+  elements.remoteLocationName.value = item?.name || "";
+  elements.remoteLocationServer.value = item?.server || "";
+  elements.remoteLocationPath.value = item?.remote_path || "";
+  elements.remoteLocationNotes.value = item?.notes || "";
+}
+
+function setLocalForm(item = null) {
+  elements.localLocationId.value = item?.id || "";
+  elements.localLocationName.value = item?.name || "";
+  elements.localLocationPath.value = item?.local_path || "";
+  elements.localLocationNotes.value = item?.notes || "";
+}
+
+function composeDefaultsPayload() {
+  return {
+    mode: elements.composeJobMode.value,
+    dry_run: elements.composeDryRun.checked,
+    auto_retry: elements.composeAutoRetry.checked,
+    mirror_confirmed: elements.composeMirrorConfirmed.checked,
+  };
+}
+
+function applyRemoteToBuilder(remote) {
+  if (!remote) return;
+  document.getElementById("server").value = remote.server;
+  document.getElementById("remotePath").value = remote.remote_path;
+  if (!document.getElementById("name").value.trim()) {
+    document.getElementById("name").value = remote.name;
+  }
+  setView("builder");
+}
+
+function applyLocalToBuilder(localItem) {
+  if (!localItem) return;
+  document.getElementById("localPath").value = localItem.local_path;
+  if (!document.getElementById("name").value.trim()) {
+    document.getElementById("name").value = localItem.name;
+  }
+  setView("builder");
+}
+
+function fillBuilderFromLocationPair(remote, localItem) {
+  if (!remote || !localItem) {
+    ui.showToast("Select at least one remote and one local location", "warn", 2500);
+    return;
+  }
+  document.getElementById("server").value = remote.server;
+  document.getElementById("remotePath").value = remote.remote_path;
+  document.getElementById("localPath").value = localItem.local_path;
+  if (!document.getElementById("name").value.trim()) {
+    document.getElementById("name").value = `${remote.name} -> ${localItem.name}`;
+  }
+  setView("builder");
+  document.getElementById("name").focus();
+}
+
+function renderLocations(locations, error = null) {
+  if (error) {
+    elements.remoteLocationsList.innerHTML = `<p>${error}</p>`;
+    elements.localLocationsList.innerHTML = `<p>${error}</p>`;
+    return;
+  }
+  const remotes = locations.remote_locations || [];
+  const locals_ = locations.local_locations || [];
+
+  elements.remoteLocationsList.innerHTML =
+    remotes.length === 0
+      ? "<p>No remote locations yet.</p>"
+      : remotes
+          .map(
+            (item) => `
+              <article class="location-item">
+                <div class="location-item-head">
+                  <span class="location-item-title">${item.name}</span>
+                  <span class="location-item-meta">${item.id}</span>
+                </div>
+                <div class="location-item-meta">${item.server}:${item.remote_path}</div>
+                <div class="location-item-meta">${item.notes || ""}</div>
+                <div class="location-item-actions">
+                  <button data-loc-kind="remote" data-loc-action="use" data-loc-id="${item.id}" type="button">Use</button>
+                  <button data-loc-kind="remote" data-loc-action="edit" data-loc-id="${item.id}" type="button">Edit</button>
+                  <button data-loc-kind="remote" data-loc-action="delete" data-loc-id="${item.id}" type="button">Delete</button>
+                </div>
+              </article>
+            `
+          )
+          .join("");
+
+  elements.localLocationsList.innerHTML =
+    locals_.length === 0
+      ? "<p>No local locations yet.</p>"
+      : locals_
+          .map(
+            (item) => `
+              <article class="location-item">
+                <div class="location-item-head">
+                  <span class="location-item-title">${item.name}</span>
+                  <span class="location-item-meta">${item.id}</span>
+                </div>
+                <div class="location-item-meta">${item.local_path}</div>
+                <div class="location-item-meta">${item.notes || ""}</div>
+                <div class="location-item-actions">
+                  <button data-loc-kind="local" data-loc-action="use" data-loc-id="${item.id}" type="button">Use</button>
+                  <button data-loc-kind="local" data-loc-action="edit" data-loc-id="${item.id}" type="button">Edit</button>
+                  <button data-loc-kind="local" data-loc-action="delete" data-loc-id="${item.id}" type="button">Delete</button>
+                </div>
+              </article>
+            `
+          )
+          .join("");
+
+  const remoteOptions = remotes
+    .map((item) => `<option value="${item.id}">${item.name} · ${item.server}:${item.remote_path}</option>`)
+    .join("");
+  const localOptions = locals_
+    .map((item) => `<option value="${item.id}">${item.name} · ${item.local_path}</option>`)
+    .join("");
+  elements.composeRemoteIds.innerHTML = remoteOptions;
+  elements.composeLocalIds.innerHTML = localOptions;
+}
+
+async function refreshLocations() {
+  try {
+    const data = await api("/api/locations");
+    locationsCache = data.locations;
+    renderLocations(data.locations, null);
+  } catch (error) {
+    renderLocations(null, error.message);
+  }
+}
+
 function renderUpdateStatus(payload, error = null) {
   if (!elements.updateStatusEl) return;
   if (error) {
@@ -385,6 +551,54 @@ async function runSetupAction(actionId) {
     ui.showToast(result.output.split("\n")[0], "ok", 2200);
   }
   await Promise.all([refreshSetup(), refreshSystemChecks(), refreshServiceStatus()]);
+}
+
+async function runLocationCompose(create = false) {
+  const remoteIds = getSelectedValues(elements.composeRemoteIds);
+  const localIds = getSelectedValues(elements.composeLocalIds);
+  if (remoteIds.length === 0 || localIds.length === 0) {
+    ui.showToast("Select remote and local locations first", "warn", 2600);
+    return;
+  }
+  const payload = {
+    remote_ids: remoteIds,
+    local_ids: localIds,
+    pair_mode: elements.composePairMode.value,
+    name_template: elements.composeNameTemplate.value.trim(),
+    defaults: composeDefaultsPayload(),
+    create,
+  };
+  const data = await api("/api/locations/compose", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  const result = data.result || {};
+  const summary = [
+    `Pair mode: ${result.pair_mode}`,
+    `Total pairs: ${result.pairs_total}`,
+    `Preview jobs: ${(result.preview_jobs || []).length}`,
+    `Created jobs: ${result.created_count || 0}`,
+    `Errors: ${(result.errors || []).length}`,
+  ];
+  const previewNames = (result.preview_jobs || []).slice(0, 25).map((item) => item.name);
+  if (previewNames.length > 0) {
+    summary.push("");
+    summary.push("Preview names:");
+    for (const name of previewNames) summary.push(`- ${name}`);
+  }
+  if ((result.errors || []).length > 0) {
+    summary.push("");
+    summary.push("Errors:");
+    for (const line of result.errors.slice(0, 40)) summary.push(`- ${line}`);
+  }
+  elements.composeOutput.textContent = summary.join("\n");
+  if (create) {
+    await Promise.all([refreshJobs(), refreshOnboarding()]);
+    ui.showToast(`Created ${result.created_count || 0} job(s)`, "ok", 2600);
+    setView("jobs");
+  } else {
+    ui.showToast(`Preview built for ${result.pairs_total || 0} pair(s)`, "ok", 2200);
+  }
 }
 
 async function refreshCommandPreview() {
@@ -528,6 +742,110 @@ elements.jobForm.addEventListener("submit", async (event) => {
 
 elements.clearBtn.addEventListener("click", clearForm);
 
+elements.remoteLocationClearBtn.addEventListener("click", () => setRemoteForm(null));
+elements.localLocationClearBtn.addEventListener("click", () => setLocalForm(null));
+
+elements.remoteLocationForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const id = elements.remoteLocationId.value.trim();
+  const payload = {
+    name: elements.remoteLocationName.value.trim(),
+    server: elements.remoteLocationServer.value.trim(),
+    remote_path: elements.remoteLocationPath.value.trim(),
+    notes: elements.remoteLocationNotes.value.trim(),
+  };
+  try {
+    if (id) {
+      await api(`/api/locations/remote/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      ui.showToast(`Updated remote location ${id}`, "ok", 2200);
+    } else {
+      const data = await api("/api/locations/remote", { method: "POST", body: JSON.stringify(payload) });
+      ui.showToast(`Created remote location ${data.location.id}`, "ok", 2200);
+    }
+    setRemoteForm(null);
+    await refreshLocations();
+  } catch (error) {
+    ui.showToast(error.message, "err", 4800);
+  }
+});
+
+elements.localLocationForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const id = elements.localLocationId.value.trim();
+  const payload = {
+    name: elements.localLocationName.value.trim(),
+    local_path: elements.localLocationPath.value.trim(),
+    notes: elements.localLocationNotes.value.trim(),
+  };
+  try {
+    if (id) {
+      await api(`/api/locations/local/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      ui.showToast(`Updated local location ${id}`, "ok", 2200);
+    } else {
+      const data = await api("/api/locations/local", { method: "POST", body: JSON.stringify(payload) });
+      ui.showToast(`Created local location ${data.location.id}`, "ok", 2200);
+    }
+    setLocalForm(null);
+    await refreshLocations();
+  } catch (error) {
+    ui.showToast(error.message, "err", 4800);
+  }
+});
+
+elements.remoteLocationsList.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-loc-kind][data-loc-action][data-loc-id]");
+  if (!btn) return;
+  const id = btn.dataset.locId;
+  const action = btn.dataset.locAction;
+  const item = (locationsCache.remote_locations || []).find((entry) => entry.id === id);
+  if (!item) return;
+  try {
+    if (action === "edit") {
+      setRemoteForm(item);
+      return;
+    }
+    if (action === "use") {
+      applyRemoteToBuilder(item);
+      return;
+    }
+    if (action === "delete") {
+      if (!confirm(`Delete remote location ${item.name}?`)) return;
+      await api(`/api/locations/remote/${id}`, { method: "DELETE" });
+      ui.showToast(`Deleted remote location ${id}`, "ok", 2200);
+      await refreshLocations();
+    }
+  } catch (error) {
+    ui.showToast(error.message, "err", 5200);
+  }
+});
+
+elements.localLocationsList.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-loc-kind][data-loc-action][data-loc-id]");
+  if (!btn) return;
+  const id = btn.dataset.locId;
+  const action = btn.dataset.locAction;
+  const item = (locationsCache.local_locations || []).find((entry) => entry.id === id);
+  if (!item) return;
+  try {
+    if (action === "edit") {
+      setLocalForm(item);
+      return;
+    }
+    if (action === "use") {
+      applyLocalToBuilder(item);
+      return;
+    }
+    if (action === "delete") {
+      if (!confirm(`Delete local location ${item.name}?`)) return;
+      await api(`/api/locations/local/${id}`, { method: "DELETE" });
+      ui.showToast(`Deleted local location ${id}`, "ok", 2200);
+      await refreshLocations();
+    }
+  } catch (error) {
+    ui.showToast(error.message, "err", 5200);
+  }
+});
+
 elements.refreshBtn.addEventListener("click", async () => {
   try {
     await Promise.all([
@@ -538,6 +856,7 @@ elements.refreshBtn.addEventListener("click", async () => {
       refreshSystemChecks(),
       refreshSetup(),
       refreshOnboarding(),
+      refreshLocations(),
       refreshHistory(),
     ]);
     ui.showToast("Refreshed", "ok", 1200);
@@ -550,6 +869,9 @@ elements.refreshLogBtn.addEventListener("click", () => refreshLog().catch((e) =>
 elements.refreshHistoryBtn.addEventListener("click", () => refreshHistory().catch((e) => ui.showToast(e.message, "err")));
 elements.refreshSetupBtn.addEventListener("click", () => refreshSetup().catch((e) => ui.showToast(e.message, "err")));
 elements.refreshWizardBtn.addEventListener("click", () => refreshOnboarding().catch((e) => ui.showToast(e.message, "err")));
+elements.refreshLocationsBtn.addEventListener("click", () =>
+  refreshLocations().catch((e) => ui.showToast(e.message, "err"))
+);
 
 elements.clearPreviewBtn.addEventListener("click", () => {
   elements.previewJobEl.textContent = "No preview yet";
@@ -567,6 +889,34 @@ elements.copyDiagnosticsBtn.addEventListener("click", () =>
 elements.checkUpdatesBtn.addEventListener("click", () =>
   refreshUpdateStatus(true, true).catch((e) => ui.showToast(e.message, "err", 4500))
 );
+
+elements.previewComposeBtn.addEventListener("click", () =>
+  runLocationCompose(false).catch((e) => ui.showToast(e.message, "err", 5000))
+);
+
+elements.createComposeBtn.addEventListener("click", async () => {
+  if (!confirm("Create jobs from selected location combinations?")) return;
+  try {
+    await runLocationCompose(true);
+  } catch (error) {
+    ui.showToast(error.message, "err", 5000);
+  }
+});
+
+elements.usePairInBuilderBtn.addEventListener("click", () => {
+  const remoteId = getSelectedValues(elements.composeRemoteIds)[0];
+  const localId = getSelectedValues(elements.composeLocalIds)[0];
+  const remote = (locationsCache.remote_locations || []).find((item) => item.id === remoteId) || null;
+  const localItem = (locationsCache.local_locations || []).find((item) => item.id === localId) || null;
+  fillBuilderFromLocationPair(remote, localItem);
+  if (remote && localItem) {
+    document.getElementById("mode").value = elements.composeJobMode.value;
+    document.getElementById("dryRun").checked = elements.composeDryRun.checked;
+    document.getElementById("autoRetry").checked = elements.composeAutoRetry.checked;
+    document.getElementById("mirrorConfirmed").checked = elements.composeMirrorConfirmed.checked;
+    updateMirrorConfirmControl(false);
+  }
+});
 
 elements.setupActionsEl.addEventListener("click", async (event) => {
   const btn = event.target.closest("button[data-setup-action]");
@@ -734,6 +1084,10 @@ setInterval(() => {
 }, 12000);
 
 setInterval(() => {
+  refreshLocations().catch(() => {});
+}, 30000);
+
+setInterval(() => {
   runScheduledWeeklyUpdateCheck().catch(() => {});
 }, 3600000);
 
@@ -745,6 +1099,7 @@ Promise.all([
   refreshSystemChecks(),
   refreshSetup(),
   refreshOnboarding(),
+  refreshLocations(),
   runScheduledWeeklyUpdateCheck(),
   refreshHistory(),
 ]).catch((error) => {

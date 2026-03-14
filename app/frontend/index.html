@@ -16,6 +16,7 @@
       <nav class="nav-list" aria-label="Primary">
         <button type="button" class="nav-btn active" data-view="overview">Overview</button>
         <button type="button" class="nav-btn" data-view="jobs">Jobs</button>
+        <button type="button" class="nav-btn" data-view="locations">Locations</button>
         <button type="button" class="nav-btn" data-view="builder">Job Builder</button>
         <button type="button" class="nav-btn" data-view="logs">Logs & Diagnostics</button>
         <button type="button" class="nav-btn" data-view="setup">Setup & Updates</button>
@@ -92,6 +93,117 @@
           </div>
           <div class="section-body">
             <div id="jobs"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" data-view-panel="locations">
+        <section class="panel locations collapsible" data-section="locations-library">
+          <div class="section-head">
+            <h2>Location Library</h2>
+            <button class="collapse-btn" type="button" data-target-section="locations-library">Collapse</button>
+          </div>
+          <div class="section-body">
+            <div class="log-header">
+              <strong>Reusable source and destination profiles</strong>
+              <button type="button" id="refreshLocationsBtn">Refresh locations</button>
+            </div>
+            <div class="location-grid">
+              <article class="location-card">
+                <h3>Remote Locations</h3>
+                <form id="remoteLocationForm" class="location-form">
+                  <input type="hidden" id="remoteLocationId">
+                  <label>Name
+                    <input type="text" id="remoteLocationName" required placeholder="Production Media">
+                  </label>
+                  <label>SSH Server
+                    <input type="text" id="remoteLocationServer" required placeholder="user@host">
+                  </label>
+                  <label>Remote Path
+                    <input type="text" id="remoteLocationPath" required placeholder="/var/www/html/sites/default/files">
+                  </label>
+                  <label>Notes
+                    <input type="text" id="remoteLocationNotes" placeholder="optional">
+                  </label>
+                  <div class="row-buttons">
+                    <button type="submit">Save Remote</button>
+                    <button type="button" id="remoteLocationClearBtn">Clear</button>
+                  </div>
+                </form>
+                <div id="remoteLocationsList" class="location-list"></div>
+              </article>
+
+              <article class="location-card">
+                <h3>Local Locations</h3>
+                <form id="localLocationForm" class="location-form">
+                  <input type="hidden" id="localLocationId">
+                  <label>Name
+                    <input type="text" id="localLocationName" required placeholder="Local Drupal Files">
+                  </label>
+                  <label>Local Path
+                    <input type="text" id="localLocationPath" required placeholder="/Users/me/dev/project/web/sites/default/files">
+                  </label>
+                  <label>Notes
+                    <input type="text" id="localLocationNotes" placeholder="optional">
+                  </label>
+                  <div class="row-buttons">
+                    <button type="submit">Save Local</button>
+                    <button type="button" id="localLocationClearBtn">Clear</button>
+                  </div>
+                </form>
+                <div id="localLocationsList" class="location-list"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel compose collapsible" data-section="locations-compose">
+          <div class="section-head">
+            <h2>Compose Jobs</h2>
+            <button class="collapse-btn" type="button" data-target-section="locations-compose">Collapse</button>
+          </div>
+          <div class="section-body">
+            <div class="location-grid">
+              <article class="location-card">
+                <h3>Select Profiles</h3>
+                <label>Remote Locations (multi-select)
+                  <select id="composeRemoteIds" multiple size="7"></select>
+                </label>
+                <label>Local Locations (multi-select)
+                  <select id="composeLocalIds" multiple size="7"></select>
+                </label>
+                <label>Pair Mode
+                  <select id="composePairMode">
+                    <option value="matrix">matrix (all remote x local)</option>
+                    <option value="zip">zip (1-to-1 by order)</option>
+                  </select>
+                </label>
+                <label>Name Template
+                  <input type="text" id="composeNameTemplate" value="{remote_name} -> {local_name}">
+                </label>
+              </article>
+
+              <article class="location-card">
+                <h3>Job Defaults</h3>
+                <label>Sync Mode
+                  <select id="composeJobMode">
+                    <option value="append">append (safe default)</option>
+                    <option value="mirror">mirror (delete extra local files)</option>
+                  </select>
+                </label>
+                <div class="checks">
+                  <label><input type="checkbox" id="composeDryRun" checked> Dry run by default</label>
+                  <label><input type="checkbox" id="composeAutoRetry" checked> Auto retry</label>
+                  <label><input type="checkbox" id="composeMirrorConfirmed"> Confirm mirror delete mode</label>
+                </div>
+                <div class="row-buttons">
+                  <button type="button" id="usePairInBuilderBtn">Use First Pair In Builder</button>
+                  <button type="button" id="previewComposeBtn">Preview Composition</button>
+                  <button type="button" id="createComposeBtn">Create Jobs From Selection</button>
+                </div>
+              </article>
+            </div>
+            <pre id="composeOutput">Select remote/local profiles to preview or create jobs in bulk.</pre>
           </div>
         </section>
       </section>

@@ -1,0 +1,19 @@
+{
+  "remote_locations": [
+    {
+      "id": "prod-media",
+      "name": "Prod Media",
+      "server": "user@prod.example.com",
+      "remote_path": "/var/www/html/sites/default/files",
+      "notes": "Stage source"
+    }
+  ],
+  "local_locations": [
+    {
+      "id": "local-media",
+      "name": "Local Media",
+      "local_path": "/Users/you/dev/project/web/sites/default/files",
+      "notes": "Developer workstation"
+    }
+  ]
+}
