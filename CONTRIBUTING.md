@@ -62,6 +62,15 @@ npm run lint:frontend
 npm run build:frontend
 ```
 
+- Docs build:
+
+```bash
+python3 -m venv .venv-docs
+source .venv-docs/bin/activate
+pip install -r requirements-docs.txt
+mkdocs build --strict
+```
+
 - Shell scripts parse:
 
 ```bash

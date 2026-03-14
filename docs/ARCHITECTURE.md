@@ -4,49 +4,49 @@
 
 - Local-first: backend binds to localhost by default.
 - One-way safety by design: remote source to local destination.
-- Operational clarity: all job states are visible and inspectable.
-- Zero heavy runtime dependencies for easy install.
+- Operational clarity: job state and service state are visible in one console.
+- Lightweight backend with pragmatic frontend tooling.
 
-## Components
+## System Components
 
 1. `app/backend/server.py`
-- HTTP API + static file server
+- Local HTTP API + static asset server
 - Job lifecycle orchestration
-- Retry/backoff logic with network classification
-- Rsync capability detection and command fallback
-- Service-level pause control (global auto-sync suspend)
-- Log tail and history endpoints
+- Retry/backoff logic with network-failure classification
+- Rsync capability detection and command fallback behavior
+- Service-level pause/resume control
+- Diagnostics, history, and setup action endpoints
 
-2. `app/frontend/app.js`
-- Controller/orchestration layer
-- Polling loops, form events, API calls
-- Setup Center action execution flow
-- Basic/Advanced/Expert editor mode control
+2. `app/frontend/src/*` (React + Vite + Tailwind)
+- Multi-screen operations console (`Overview`, `Jobs`, `Locations`, `Builder`, `Logs`, `Setup`)
+- Polling/state orchestration and API integration
+- Theme presets (`Terminal`, `Fancy`) and compact mode
+- Basic/Advanced/Expert builder modes
 
-3. `app/frontend/ui.js`
-- Rendering and view-state behavior
-- Theme presets (Terminal, Fancy), compact mode, KPI cards
-- Setup cards and history timeline rendering
+3. `app/menubar/RsyncWebAppMenuBar.swift`
+- Native macOS status item (`rsync.wa`)
+- Open/start/stop/restart/status controls
+- Update check + updater action integration
 
-4. `bin/*.sh`
-- Start/stop/status/open scripts
-- LaunchAgent/menu bar installers and Linux desktop integration
+4. `bin/*.sh` and platform helpers
+- Service lifecycle scripts
+- Setup/install scripts (dependencies, launchagent, shortcuts, menu bar)
+- Update scripts
 
-5. `app/menubar/RsyncWebAppMenuBar.swift`
-- Native macOS status item controller (`rsync.wa`)
+## Persistence Model
+
+- Jobs: `profiles/jobs.json`
+- Location profiles: `profiles/locations.json`
+- Runtime history/events: `state/rsync-webapp.db` (SQLite)
+- Service settings: `state/service-settings.json`
+- Logs: `state/logs/`
 
 ## Security Model
 
-- Job payload validation runs in backend before command construction.
-- Local paths must be absolute and local-only.
-- Remote paths must be absolute remote paths.
-- Known dangerous rsync args are blocked.
-- Security headers are applied to all responses.
-- Mutating APIs enforce localhost-origin checks.
-- Directory listing is disabled.
-- API is intended for local use (`127.0.0.1`).
-
-## Why no React/Next (currently)
-
-The current UI is intentionally dependency-light to reduce install friction and operational drift.  
-If the project evolves to multi-user auth, plugin extensions, or rich charting, a framework migration is straightforward because controller and renderer are already split.
+- Input validation before command construction
+- Absolute path constraints (remote and local)
+- One-way-safety guardrails on rsync args
+- Mirror mode requires explicit delete confirmation
+- Mutating endpoints enforce localhost-origin checks
+- Security response headers enabled
+- Intended local-only usage (`127.0.0.1`)

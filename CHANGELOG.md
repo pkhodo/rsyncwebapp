@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file.
 - Rebuilt operations UI with dedicated screens: `Overview`, `Jobs`, `Locations`, `Builder`, `Logs`, `Setup`.
 - Theme system refresh for `Terminal` and `Fancy` modes with compact density toggle.
 - Unified toast feedback and richer KPI/status surfaces for high-signal monitoring.
+- GitHub Pages docs pipeline using MkDocs Material (`docs-pages.yml`) with sitemap support.
+- New docs entry page (`docs/index.md`) and crawler-friendly `docs/robots.txt`.
 
 ### Changed
 - Backend now serves built frontend assets from `app/frontend/dist` (with source fallback).

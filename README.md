@@ -2,6 +2,8 @@
 
 Local-first web dashboard for one-way `rsync` jobs (`remote -> local`) with retries, logs, previews, setup helpers, and high-signal operations UI.
 
+Docs site: <https://pkhodo.github.io/rsyncwebapp/>
+
 ## 60-Second Start
 
 1. Get the app folder on your machine:
@@ -167,6 +169,12 @@ Desktop shortcuts:
 - [Legal Notice](./NOTICE.md)
 - [Contributing](./CONTRIBUTING.md)
 - [Security Policy](./SECURITY.md)
+
+### GitHub Pages Docs
+
+Documentation is published from this repo via GitHub Actions to:
+
+- <https://pkhodo.github.io/rsyncwebapp/>
 
 ## License
 
