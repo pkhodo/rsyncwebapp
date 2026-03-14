@@ -62,6 +62,7 @@ let lastConnectivity = null;
 let lastOnboarding = null;
 let servicePause = false;
 let lastSelectedMode = document.getElementById("mode").value;
+let autoUpdatePrompted = false;
 
 function setEditorMode(mode, persist = true) {
   const allowed = ["basic", "advanced", "expert"];
@@ -266,6 +267,10 @@ async function refreshUpdateStatus(force = false, showToast = false) {
     const data = await api(`/api/app/update-check${force ? "?force=1" : ""}`);
     const update = data.update || {};
     renderUpdateStatus(update, null);
+    if (!showToast && update.ok && update.update_available && !autoUpdatePrompted) {
+      ui.showToast("Update available. Update checks are read-only and never delete project files.", "warn", 5200);
+      autoUpdatePrompted = true;
+    }
     if (!showToast) return;
     if (update.ok && update.update_available && update.release_url) {
       ui.showToast(`Update available: v${update.latest_version}`, "warn", 3600);
