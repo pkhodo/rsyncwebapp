@@ -15,6 +15,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -31,6 +33,8 @@ PROFILE_PATH = ROOT / "profiles" / "jobs.json"
 DB_PATH = STATE_DIR / "rsync-webapp.db"
 SETTINGS_PATH = STATE_DIR / "service-settings.json"
 BIN_DIR = ROOT / "bin"
+PACKAGE_JSON_PATH = ROOT / "package.json"
+ENV_UPDATE_REPO = os.environ.get("RSYNC_WEBAPP_UPDATE_REPO", "").strip()
 
 
 def now_iso() -> str:
@@ -47,10 +51,50 @@ def parse_shell_list(value: str) -> list[str]:
     return items
 
 
+def read_app_version() -> str:
+    try:
+        payload = json.loads(PACKAGE_JSON_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return "0.0.0"
+    return str(payload.get("version", "0.0.0"))
+
+
+APP_VERSION = read_app_version()
+
+
+def _version_tuple(value: str) -> tuple[int, int, int]:
+    cleaned = value.strip().lstrip("vV")
+    digits = re.findall(r"\d+", cleaned)
+    major = int(digits[0]) if len(digits) > 0 else 0
+    minor = int(digits[1]) if len(digits) > 1 else 0
+    patch = int(digits[2]) if len(digits) > 2 else 0
+    return (major, minor, patch)
+
+
 def _run_capture(args: list[str]) -> tuple[int, str]:
     proc = subprocess.run(args, capture_output=True, text=True)
     output = (proc.stdout + "\n" + proc.stderr).strip()
     return proc.returncode, output
+
+
+def detect_update_repo() -> str:
+    if ENV_UPDATE_REPO:
+        return ENV_UPDATE_REPO
+    if not (ROOT / ".git").exists():
+        return "pkhodo/rsyncwebapp"
+    code, remote_url = _run_capture(["git", "-C", str(ROOT), "config", "--get", "remote.origin.url"])
+    if code != 0:
+        return "pkhodo/rsyncwebapp"
+    text = remote_url.strip()
+    https_match = re.search(r"github\.com/([^/]+/[^/.]+)(?:\.git)?$", text)
+    ssh_match = re.search(r"github\.com:([^/]+/[^/.]+)(?:\.git)?$", text)
+    match = https_match or ssh_match
+    if not match:
+        return "pkhodo/rsyncwebapp"
+    return match.group(1)
+
+
+UPDATE_REPO = detect_update_repo()
 
 
 def detect_rsync_capabilities() -> dict[str, Any]:
@@ -771,6 +815,7 @@ class AppState:
         self._connectivity_lock = threading.Lock()
         self._connectivity_cache: dict[str, dict[str, Any]] = {}
         self._rsync_capabilities_cache: dict[str, Any] | None = None
+        self._update_check_cache: dict[str, Any] | None = None
         self._restart_callback: Any = None
         self._stop_callback: Any = None
         self._load_settings()
@@ -962,6 +1007,92 @@ class AppState:
             "job_logs": job_logs,
         }
 
+    def app_version_info(self) -> dict[str, Any]:
+        return {
+            "version": APP_VERSION,
+            "update_repo": UPDATE_REPO,
+            "checked_at": now_iso(),
+        }
+
+    def check_for_updates(self, force: bool = False) -> dict[str, Any]:
+        with self._lock:
+            cached = self._update_check_cache
+        if cached and not force:
+            checked_at = cached.get("checked_at")
+            if checked_at:
+                age_seconds = time.time() - datetime.fromisoformat(checked_at).timestamp()
+                if age_seconds < 3600:
+                    return cached
+
+        url = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "rsyncwebapp-update-checker",
+            },
+            method="GET",
+        )
+        result: dict[str, Any] = {
+            "current_version": APP_VERSION,
+            "update_repo": UPDATE_REPO,
+            "checked_at": now_iso(),
+            "ok": False,
+            "update_available": False,
+        }
+        if (ROOT / ".git").exists():
+            branch_code, branch_out = _run_capture(
+                ["git", "-C", str(ROOT), "branch", "--show-current"]
+            )
+            local_code, local_out = _run_capture(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
+            branch = branch_out.strip() if branch_code == 0 and branch_out.strip() else "main"
+            if local_code == 0 and local_out.strip():
+                remote_code, remote_out = _run_capture(
+                    ["git", "-C", str(ROOT), "ls-remote", "origin", f"refs/heads/{branch}"]
+                )
+                remote_sha = remote_out.split()[0] if remote_code == 0 and remote_out.strip() else ""
+                if remote_sha:
+                    local_sha = local_out.strip()
+                    result.update(
+                        {
+                            "ok": True,
+                            "channel": "git",
+                            "branch": branch,
+                            "local_commit": local_sha[:10],
+                            "remote_commit": remote_sha[:10],
+                            "update_available": local_sha != remote_sha,
+                        }
+                    )
+                    with self._lock:
+                        self._update_check_cache = result
+                    return result
+
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            latest_tag = str(payload.get("tag_name", "")).strip()
+            latest_version = latest_tag.lstrip("vV") if latest_tag else ""
+            html_url = str(payload.get("html_url", "")).strip()
+            update_available = bool(
+                latest_version and _version_tuple(latest_version) > _version_tuple(APP_VERSION)
+            )
+            result.update(
+                {
+                    "ok": True,
+                    "channel": "release",
+                    "latest_tag": latest_tag,
+                    "latest_version": latest_version,
+                    "release_url": html_url,
+                    "update_available": update_available,
+                }
+            )
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            result["error"] = str(exc)
+
+        with self._lock:
+            self._update_check_cache = result
+        return result
+
     def preview_command(self, payload: dict[str, Any]) -> dict[str, Any]:
         preview_payload = dict(payload)
         preview_payload["id"] = preview_payload.get("id") or "preview-job"
@@ -1148,6 +1279,12 @@ class AppState:
                     "description": "Install/verify python3, ssh, and rsync.",
                 },
                 {
+                    "id": "update_app",
+                    "label": "Update App",
+                    "script": "update-app.sh",
+                    "description": "Pull latest release if git checkout, or open release downloads.",
+                },
+                {
                     "id": "install_launchagent",
                     "label": "Enable Autostart",
                     "script": "install-launchagent.sh",
@@ -1175,6 +1312,12 @@ class AppState:
                     "description": "Install/verify python3, ssh, and rsync.",
                 },
                 {
+                    "id": "update_app",
+                    "label": "Update App",
+                    "script": "update-app.sh",
+                    "description": "Pull latest release if git checkout, or open release downloads.",
+                },
+                {
                     "id": "install_linux_autostart",
                     "label": "Enable Autostart",
                     "script": "install-linux-autostart.sh",
@@ -1194,6 +1337,12 @@ class AppState:
                     "label": "Install Dependencies",
                     "script": "install-windows-deps.ps1",
                     "description": "Guide/install required dependencies for Windows.",
+                },
+                {
+                    "id": "update_app",
+                    "label": "Update App",
+                    "script": "update-app.ps1",
+                    "description": "Pull latest release if git checkout, or open release downloads.",
                 },
                 {
                     "id": "install_windows_shortcuts",
@@ -1445,6 +1594,14 @@ class RequestHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/system/checks":
             self._send_json({"ok": True, "checks": self.app_state.system_checks()})
+            return
+        if path == "/api/app/version":
+            self._send_json({"ok": True, "app": self.app_state.app_version_info()})
+            return
+        if path == "/api/app/update-check":
+            query = parse_qs(parsed.query)
+            force = query.get("force", ["0"])[0] == "1"
+            self._send_json({"ok": True, "update": self.app_state.check_for_updates(force=force)})
             return
         if path == "/api/onboarding/status":
             self._send_json({"ok": True, "onboarding": self.app_state.onboarding_status()})

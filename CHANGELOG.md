@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.1] - 2026-03-14
+
+### Added
+- In-app update flow: `Check Updates` status/action in header.
+- Backend update endpoints: `GET /api/app/version` and `GET /api/app/update-check`.
+- Setup Center updater action (`Update App`) for macOS/Linux/Windows.
+- Update helper scripts: `bin/update-app.sh` and `bin/update-app.ps1`.
+
+### Changed
+- Full visual redesign pass for cleaner, more minimal dashboard usability.
+- Improved control hierarchy and readability in dense operational screens.
+- Update checks now support git-channel comparison (`local vs origin`) before release API fallback.
+
+### Fixed
+- UX friction around discovering how to upgrade app builds.
+
 ## [0.3.0] - 2026-03-14
 
 ### Added

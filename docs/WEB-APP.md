@@ -24,6 +24,18 @@ Open in browser:
 ./bin/open-ui.sh
 ```
 
+Update helpers:
+
+```bash
+./bin/update-app.sh
+```
+
+Windows:
+
+```powershell
+.\bin\update-app.ps1
+```
+
 ## Autostart and Desktop Integration
 
 macOS autostart (restart on crash + start at login):
@@ -97,6 +109,7 @@ Windows one-click starter:
 9. Disable dry-run only after validation.
 10. Use `Pause Auto-Sync` when ZTNA is intentionally offline for extended periods.
 11. Use **Copy Diagnostics** in the header when you need a full state snapshot for debugging/support.
+12. Use **Check Updates** in the header and **Update App** in Setup Center for one-click upgrade flow.
 
 ## Editor Modes
 
@@ -151,6 +164,8 @@ When **Pause Auto-Sync** is enabled:
 - `GET /api/jobs/{id}/history`
 - `GET /api/connectivity`
 - `GET /api/system/checks`
+- `GET /api/app/version`
+- `GET /api/app/update-check`
 - `GET /api/onboarding/status`
 - `GET /api/diagnostics`
 - `GET /api/setup/options`

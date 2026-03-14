@@ -1,7 +1,7 @@
 {
   "name": "rsyncwebapp",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Rsync Web App frontend lint tooling",
   "scripts": {
     "lint:frontend": "eslint app/frontend/*.js"

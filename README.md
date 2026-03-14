@@ -65,6 +65,18 @@ Use **Copy Diagnostics** in the top action bar if you need to share service stat
 
 You can also run installers directly from `bin/` if preferred.
 
+## Updating The App
+
+No manual git workflow is required for most users:
+
+- Click **Check Updates** in the header to see if a newer release exists.
+- In **Setup Center**, run **Update App**:
+  - If this is a git clone, it performs a safe fast-forward update.
+  - If this is a ZIP install, it opens the latest release download page.
+- Update helpers are:
+  - macOS/Linux: `./bin/update-app.sh`
+  - Windows: `.\bin\update-app.ps1`
+
 ## macOS Menu Bar (Recommended)
 
 For a no-terminal workflow on macOS:

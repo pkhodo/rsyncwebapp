@@ -22,7 +22,9 @@ const elements = {
   serviceStatusEl: document.getElementById("serviceStatus"),
   autoSyncStatusEl: document.getElementById("autoSyncStatus"),
   connectivityStatusEl: document.getElementById("connectivityStatus"),
+  updateStatusEl: document.getElementById("updateStatus"),
   toggleAutoSyncBtn: document.getElementById("toggleAutoSyncBtn"),
+  checkUpdatesBtn: document.getElementById("checkUpdatesBtn"),
   copyDiagnosticsBtn: document.getElementById("copyDiagnosticsBtn"),
   themeSelect: document.getElementById("themeSelect"),
   toastContainer: document.getElementById("toastContainer"),
@@ -226,6 +228,71 @@ async function refreshOnboarding() {
     ui.renderOnboarding(data.onboarding, null);
   } catch (error) {
     ui.renderOnboarding(null, error.message);
+  }
+}
+
+function renderUpdateStatus(payload, error = null) {
+  if (!elements.updateStatusEl) return;
+  if (error) {
+    elements.updateStatusEl.className = "status-pill warn";
+    elements.updateStatusEl.textContent = "Update check unavailable";
+    return;
+  }
+  if (!payload || !payload.ok) {
+    elements.updateStatusEl.className = "status-pill warn";
+    elements.updateStatusEl.textContent = "Update status unknown";
+    return;
+  }
+  if (payload.update_available) {
+    elements.updateStatusEl.className = "status-pill warn";
+    if (payload.channel === "git" && payload.remote_commit) {
+      elements.updateStatusEl.textContent = `Update available: ${payload.remote_commit}`;
+    } else {
+      elements.updateStatusEl.textContent = `Update available: v${payload.latest_version || "new release"}`;
+    }
+    return;
+  }
+  if (payload.channel === "git" && payload.local_commit) {
+    elements.updateStatusEl.className = "status-pill ok";
+    elements.updateStatusEl.textContent = `Up to date: ${payload.local_commit}`;
+    return;
+  }
+  elements.updateStatusEl.className = "status-pill ok";
+  elements.updateStatusEl.textContent = `Up to date: v${payload.current_version}`;
+}
+
+async function refreshUpdateStatus(force = false, showToast = false) {
+  try {
+    const data = await api(`/api/app/update-check${force ? "?force=1" : ""}`);
+    const update = data.update || {};
+    renderUpdateStatus(update, null);
+    if (!showToast) return;
+    if (update.ok && update.update_available && update.release_url) {
+      ui.showToast(`Update available: v${update.latest_version}`, "warn", 3600);
+      if (confirm(`Version ${update.latest_version} is available. Open download page?`)) {
+        window.open(update.release_url, "_blank", "noopener,noreferrer");
+      }
+      return;
+    }
+    if (update.ok && update.update_available && update.channel === "git") {
+      const branch = update.branch || "main";
+      ui.showToast(`Update available on origin/${branch}`, "warn", 3200);
+      return;
+    }
+    if (update.ok) {
+      if (update.channel === "git") {
+        ui.showToast(`Up to date with origin/${update.branch || "main"}`, "ok", 2600);
+      } else {
+        ui.showToast(`You are up to date (v${update.current_version})`, "ok", 2600);
+      }
+      return;
+    }
+    ui.showToast(`Update check failed: ${update.error || "unknown error"}`, "warn", 4200);
+  } catch (error) {
+    renderUpdateStatus(null, error.message);
+    if (showToast) {
+      ui.showToast(`Update check failed: ${error.message}`, "warn", 4200);
+    }
   }
 }
 
@@ -438,6 +505,10 @@ elements.copyDiagnosticsBtn.addEventListener("click", () =>
   copyDiagnostics().catch((e) => ui.showToast(e.message, "err", 4500))
 );
 
+elements.checkUpdatesBtn.addEventListener("click", () =>
+  refreshUpdateStatus(true, true).catch((e) => ui.showToast(e.message, "err", 4500))
+);
+
 elements.setupActionsEl.addEventListener("click", async (event) => {
   const btn = event.target.closest("button[data-setup-action]");
   if (!btn) return;
@@ -597,6 +668,10 @@ setInterval(() => {
   refreshOnboarding().catch(() => {});
 }, 12000);
 
+setInterval(() => {
+  refreshUpdateStatus(false, false).catch(() => {});
+}, 1800000);
+
 Promise.all([
   refreshJobs(),
   refreshServiceStatus(),
@@ -605,6 +680,7 @@ Promise.all([
   refreshSystemChecks(),
   refreshSetup(),
   refreshOnboarding(),
+  refreshUpdateStatus(false, false),
   refreshHistory(),
 ]).catch((error) => {
   elements.summaryEl.textContent = `Failed to initialize: ${error.message}`;
