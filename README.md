@@ -44,15 +44,6 @@ bin/get-started.command
 
 This quickstart flow installs/verifies required dependencies (`python3`, `ssh`, `rsync`) before starting the app.
 
-## Publish To GitHub
-
-```bash
-cd /path/to/rsyncwebapp
-./bin/publish-github.sh rsyncwebapp public
-```
-
-Requires `gh` and prior `gh auth login`.
-
 ## Quality Gates
 
 - CI: Ruff + mypy + frontend ESLint + test + smoke boot
@@ -62,13 +53,30 @@ Requires `gh` and prior `gh auth login`.
 
 After opening the UI once, use **Setup Center** to install platform-specific helpers:
 
-- macOS: autostart, menu bar, desktop shortcuts
+- macOS: dependencies, autostart, menu bar, desktop shortcuts
 - Linux: autostart (systemd user service), desktop launchers
 - Windows: desktop shortcuts (PowerShell)
 
 You can also run installers directly from `bin/` if preferred.
 
-## Optional macOS Convenience
+## macOS Menu Bar (Recommended)
+
+For a no-terminal workflow on macOS:
+
+1. Open UI, then Setup Center -> **Install Dependencies**
+2. Setup Center -> **Install Menu Bar**
+3. Use the `rsync.wa` menu bar item for:
+   - Open UI
+   - Start / Stop / Restart service
+   - Status check
+
+Remove menu bar later:
+
+```bash
+./bin/uninstall-menubar.sh
+```
+
+## Optional macOS Extras
 
 Autostart on login:
 
@@ -81,8 +89,6 @@ Menu bar app:
 ```bash
 ./bin/install-menubar.sh
 ```
-
-The menu bar item appears as `rsync.wa` with native macOS symbol icons.
 
 Desktop shortcuts:
 
