@@ -454,6 +454,14 @@ class JobControl:
                 raise RuntimeError("Job already running")
             if self._service_pause_checker():
                 raise RuntimeError("Service auto-sync is paused. Resume service before starting jobs.")
+            if (
+                self.config.mode == "mirror"
+                and not self.config.mirror_confirmed
+                and not force_dry_run
+            ):
+                raise RuntimeError(
+                    "Mirror mode requires explicit delete confirmation before live run."
+                )
             self._cancel_requested.clear()
             self._thread = threading.Thread(
                 target=self._runner, kwargs={"force_dry_run": force_dry_run}, daemon=True
@@ -911,16 +919,16 @@ class AppState:
                 "detail": "python3, ssh, rsync",
             },
             {
-                "id": "first_job",
-                "label": "Create First Job",
-                "state": "ok" if has_job else "pending",
-                "detail": f"{len(jobs)} job(s) configured",
-            },
-            {
                 "id": "ssh_check",
                 "label": "Verify SSH Reachability",
                 "state": ssh_state,
                 "detail": f"{sum(1 for x in servers if x.get('reachable'))}/{len(servers)} targets reachable",
+            },
+            {
+                "id": "first_job",
+                "label": "Create First Job",
+                "state": "ok" if has_job else "pending",
+                "detail": f"{len(jobs)} job(s) configured",
             },
             {
                 "id": "first_dry_run",

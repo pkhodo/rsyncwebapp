@@ -98,6 +98,14 @@ class CommandBuildTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             job.start()
 
+    def test_start_blocked_when_mirror_unconfirmed(self):
+        payload = _base_payload()
+        payload["mirror_confirmed"] = False
+        cfg = server.JobConfig(**payload)
+        job = server.JobControl(cfg, rsync_caps_provider=lambda: _caps(), service_pause_checker=lambda: False)
+        with self.assertRaises(RuntimeError):
+            job.start(force_dry_run=False)
+
 
 class RetryClassificationTests(unittest.TestCase):
     def test_retryable_by_exit_code(self):
