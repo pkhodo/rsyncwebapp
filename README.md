@@ -69,13 +69,18 @@ You can also run installers directly from `bin/` if preferred.
 
 No manual git workflow is required for most users:
 
-- Click **Check Updates** in the header to see if a newer release exists.
+- Header **Check Updates** runs on demand.
+- Automatic background check runs at most once per week per browser profile.
 - In **Setup Center**, run **Update App**:
   - If this is a git clone, it performs a safe fast-forward update.
   - If this is a ZIP install, it opens the latest release download page.
 - Update helpers are:
   - macOS/Linux: `./bin/update-app.sh`
   - Windows: `.\bin\update-app.ps1`
+
+macOS menu bar (`rsync.wa`) also includes:
+- `Check Updates` (opens latest releases page)
+- `Update App` (runs updater script and shows output)
 
 ## macOS Menu Bar (Recommended)
 

@@ -52,6 +52,8 @@ const STORAGE_KEYS = {
   collapsedKey: "rsync_webapp_collapsed_sections",
 };
 const EDITOR_MODE_KEY = "rsync_webapp_editor_mode";
+const UPDATE_CHECK_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+const UPDATE_LAST_CHECK_KEY = "rsync_webapp_last_update_check_ms";
 
 const ui = createUI(elements, STORAGE_KEYS);
 
@@ -63,6 +65,17 @@ let lastOnboarding = null;
 let servicePause = false;
 let lastSelectedMode = document.getElementById("mode").value;
 let autoUpdatePrompted = false;
+
+function isWeeklyUpdateCheckDue() {
+  const raw = localStorage.getItem(UPDATE_LAST_CHECK_KEY);
+  const last = raw ? Number(raw) : 0;
+  if (!Number.isFinite(last) || last <= 0) return true;
+  return Date.now() - last >= UPDATE_CHECK_INTERVAL_MS;
+}
+
+function markWeeklyUpdateCheck() {
+  localStorage.setItem(UPDATE_LAST_CHECK_KEY, String(Date.now()));
+}
 
 function setEditorMode(mode, persist = true) {
   const allowed = ["basic", "advanced", "expert"];
@@ -299,6 +312,18 @@ async function refreshUpdateStatus(force = false, showToast = false) {
       ui.showToast(`Update check failed: ${error.message}`, "warn", 4200);
     }
   }
+}
+
+async function runScheduledWeeklyUpdateCheck() {
+  if (!isWeeklyUpdateCheckDue()) {
+    if (elements.updateStatusEl && elements.updateStatusEl.textContent.includes("checking")) {
+      elements.updateStatusEl.className = "status-pill";
+      elements.updateStatusEl.textContent = "Update: weekly check pending";
+    }
+    return;
+  }
+  await refreshUpdateStatus(false, false);
+  markWeeklyUpdateCheck();
 }
 
 async function copyDiagnostics() {
@@ -674,8 +699,8 @@ setInterval(() => {
 }, 12000);
 
 setInterval(() => {
-  refreshUpdateStatus(false, false).catch(() => {});
-}, 1800000);
+  runScheduledWeeklyUpdateCheck().catch(() => {});
+}, 3600000);
 
 Promise.all([
   refreshJobs(),
@@ -685,7 +710,7 @@ Promise.all([
   refreshSystemChecks(),
   refreshSetup(),
   refreshOnboarding(),
-  refreshUpdateStatus(false, false),
+  runScheduledWeeklyUpdateCheck(),
   refreshHistory(),
 ]).catch((error) => {
   elements.summaryEl.textContent = `Failed to initialize: ${error.message}`;

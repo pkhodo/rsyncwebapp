@@ -4,6 +4,7 @@ import Foundation
 final class MenuBarController: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let uiURL = URL(string: "http://rsync.localhost:8787")!
+    private let releasesURL = URL(string: "https://github.com/pkhodo/rsyncwebapp/releases/latest")!
     private let repoPath: String
 
     override init() {
@@ -54,6 +55,9 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         menu.addItem(makeMenuItem(title: "Stop Service", action: #selector(stopService), keyEquivalent: "x", symbol: "stop.fill"))
         menu.addItem(makeMenuItem(title: "Restart Service", action: #selector(restartService), keyEquivalent: "r", symbol: "arrow.clockwise"))
         menu.addItem(makeMenuItem(title: "Status", action: #selector(showStatus), keyEquivalent: "i", symbol: "info.circle"))
+        menu.addItem(.separator())
+        menu.addItem(makeMenuItem(title: "Check Updates", action: #selector(checkUpdates), keyEquivalent: "u", symbol: "arrow.triangle.2.circlepath"))
+        menu.addItem(makeMenuItem(title: "Update App", action: #selector(updateApp), keyEquivalent: "U", symbol: "square.and.arrow.down"))
         menu.addItem(.separator())
         menu.addItem(makeMenuItem(title: "Quit Menu App", action: #selector(quit), keyEquivalent: "q", symbol: "power"))
         return menu
@@ -109,6 +113,15 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     @objc private func showStatus() {
         let result = runShell("cd \(repoPath.escapedShell) && ./bin/status-ui.sh")
         showAlert("Rsync Web App Status", result.1.isEmpty ? "Exit code: \(result.0)" : result.1)
+    }
+
+    @objc private func checkUpdates() {
+        NSWorkspace.shared.open(releasesURL)
+    }
+
+    @objc private func updateApp() {
+        let result = runShell("cd \(repoPath.escapedShell) && ./bin/update-app.sh")
+        showAlert("Update App", result.1.isEmpty ? "Exit code: \(result.0)" : result.1)
     }
 
     @objc private func quit() {

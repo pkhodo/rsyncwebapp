@@ -110,6 +110,7 @@ Windows one-click starter:
 10. Use `Pause Auto-Sync` when ZTNA is intentionally offline for extended periods.
 11. Use **Copy Diagnostics** in the header when you need a full state snapshot for debugging/support.
 12. Use **Check Updates** in the header and **Update App** in Setup Center for one-click upgrade flow.
+13. Automatic update checks run at most once per week per browser profile.
 
 ## Editor Modes
 
