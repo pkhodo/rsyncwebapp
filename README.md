@@ -26,21 +26,46 @@ Local-first web dashboard for one-way `rsync` jobs (`remote -> local`) with retr
 - Guards write APIs to same-origin localhost contexts
 - Runs on `127.0.0.1` by default
 
-## Quick Start
+## Get App Locally
+
+If you do not already have this folder on your machine, start here.
+
+Option A (non-coder friendly):
+1. Open [https://github.com/pkhodo/rsyncwebapp](https://github.com/pkhodo/rsyncwebapp)
+2. Click `Code` -> `Download ZIP`
+3. Unzip it somewhere easy, for example `~/Applications/rsyncwebapp`
+4. Open that folder
+
+Option B (git):
 
 ```bash
-cd /path/to/rsyncwebapp
+git clone https://github.com/pkhodo/rsyncwebapp.git
+cd rsyncwebapp
+```
+
+## Quick Start
+
+Once the folder exists locally:
+
+macOS Finder (easiest): double-click `bin/get-started.command`
+
+Terminal (macOS/Linux):
+
+```bash
+cd /path/to/rsyncwebapp   # folder from ZIP or git clone
 ./bin/quickstart.sh
 ```
 
-Then configure your own jobs in the UI.  
-No project-specific paths or servers are preloaded.
+Windows PowerShell:
 
-macOS Finder users can also double-click:
-
-```bash
-bin/get-started.command
+```powershell
+cd C:\path\to\rsyncwebapp
+python .\app\backend\server.py
 ```
+
+Then open: `http://rsync.localhost:8787`
+
+Then configure your own jobs in the UI. No project-specific paths or servers are preloaded.
 
 This quickstart flow installs/verifies required dependencies (`python3`, `ssh`, `rsync`) before starting the app.
 
