@@ -5,16 +5,29 @@ Thanks for contributing to Rsync Web App.
 ## Development Setup
 
 1. Clone the repository.
-2. Start the app:
+2. Install frontend tooling and build assets:
+
+```bash
+npm install
+npm run build:frontend
+```
+
+3. Start the app:
 
 ```bash
 ./bin/start-ui.sh
 ```
 
-3. Open:
+4. Open:
 
 ```bash
 http://rsync.localhost:8787
+```
+
+Optional live frontend dev (with API proxy to `127.0.0.1:8787`):
+
+```bash
+npm run dev:frontend
 ```
 
 ## Guidelines
@@ -36,16 +49,17 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile app/backend/server.py
 - Python quality checks:
 
 ```bash
-ruff check app tests
-mypy app/backend/server.py tests/test_backend.py
-python3 -m unittest discover -s tests -v
+./bin/python-quality.sh
 ```
+
+This script uses a repo-local virtualenv (`.venv-quality`) so you do not need global `ruff`/`mypy` installs.
 
 - Frontend lint:
 
 ```bash
 npm install
 npm run lint:frontend
+npm run build:frontend
 ```
 
 - Shell scripts parse:

@@ -28,6 +28,7 @@ cd rsyncwebapp
 ## Highlights
 
 - Browser UI at `http://rsync.localhost:8787`
+- Frontend stack: React + Vite + Tailwind CSS + Lucide icons
 - Multi-screen console layout:
   - Overview
   - Jobs
@@ -54,6 +55,17 @@ cd rsyncwebapp
 - Compact command-center mode with KPI cards
 - Optional macOS LaunchAgent + menu bar controller
 - In-app diagnostics copy button for support/debug sharing
+
+## Frontend Source
+
+- Source files: `app/frontend/src`
+- Built assets served by backend: `app/frontend/dist`
+- Build command:
+
+```bash
+npm install
+npm run build:frontend
+```
 
 ## Safety Defaults
 
@@ -97,7 +109,7 @@ No manual git workflow is required for most users:
   - Windows: `.\bin\update-app.ps1`
 
 macOS menu bar (`rsync.wa`) also includes:
-- `Check Updates` (opens latest releases page)
+- `Check Updates` (shows update status; offers release page only when relevant)
 - `Update App` (runs updater script and shows output)
 
 ## macOS Menu Bar (Recommended)

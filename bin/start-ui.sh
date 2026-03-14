@@ -6,6 +6,7 @@ STATE_DIR="${ROOT_DIR}/state"
 LOG_DIR="${STATE_DIR}/logs"
 PID_FILE="${STATE_DIR}/rsync-webapp.pid"
 APP_LOG="${LOG_DIR}/app.log"
+FRONTEND_INDEX="${ROOT_DIR}/app/frontend/dist/index.html"
 AGENT_LABEL="local.rsyncwebapp.control"
 AGENT_FILE="${HOME}/Library/LaunchAgents/${AGENT_LABEL}.plist"
 
@@ -14,20 +15,36 @@ PORT="${RSYNC_WEBAPP_PORT:-8787}"
 
 mkdir -p "${LOG_DIR}"
 
+if [ ! -f "${FRONTEND_INDEX}" ]; then
+  echo "Frontend bundle missing: ${FRONTEND_INDEX}"
+  echo "Build it first: npm install && npm run build:frontend"
+  exit 1
+fi
+
 if lsof -ti "tcp:${PORT}" >/dev/null 2>&1; then
   echo "Rsync Web App already running on port ${PORT}"
   echo "URL: http://rsync.localhost:${PORT}"
   exit 0
 fi
 
+agent_matches_repo="0"
+if [ -f "${AGENT_FILE}" ] && grep -Fq "${ROOT_DIR}" "${AGENT_FILE}"; then
+  agent_matches_repo="1"
+fi
+
 if [ -f "${AGENT_FILE}" ]; then
-  launchctl load "${AGENT_FILE}" >/dev/null 2>&1 || true
-  launchctl kickstart -k "gui/$(id -u)/${AGENT_LABEL}" >/dev/null 2>&1 || true
-  sleep 1
-  if lsof -ti "tcp:${PORT}" >/dev/null 2>&1; then
-    echo "Rsync Web App started via LaunchAgent (${AGENT_LABEL})"
-    echo "URL: http://rsync.localhost:${PORT}"
-    exit 0
+  if [ "${agent_matches_repo}" = "1" ]; then
+    launchctl load "${AGENT_FILE}" >/dev/null 2>&1 || true
+    launchctl kickstart -k "gui/$(id -u)/${AGENT_LABEL}" >/dev/null 2>&1 || true
+    sleep 1
+    if lsof -ti "tcp:${PORT}" >/dev/null 2>&1; then
+      echo "Rsync Web App started via LaunchAgent (${AGENT_LABEL})"
+      echo "URL: http://rsync.localhost:${PORT}"
+      exit 0
+    fi
+  else
+    echo "LaunchAgent exists but points to a different repo path."
+    echo "Run ./bin/install-launchagent.sh to rebind it to this checkout."
   fi
 fi
 

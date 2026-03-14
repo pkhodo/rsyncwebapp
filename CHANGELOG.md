@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.5.0] - 2026-03-14
+
+### Added
+- New React + Vite + Tailwind frontend architecture with Lucide icon system.
+- Rebuilt operations UI with dedicated screens: `Overview`, `Jobs`, `Locations`, `Builder`, `Logs`, `Setup`.
+- Theme system refresh for `Terminal` and `Fancy` modes with compact density toggle.
+- Unified toast feedback and richer KPI/status surfaces for high-signal monitoring.
+
+### Changed
+- Backend now serves built frontend assets from `app/frontend/dist` (with source fallback).
+- Job/Location/Setup/Diagnostics workflows migrated to the new component-based UI.
+- Docs updated for frontend source/build flow and contributor setup.
+
+### Fixed
+- Menubar `Check Updates` now reports actual update status instead of blindly opening releases.
+- LaunchAgent mismatch handling improved in `start-ui.sh` and `status-ui.sh` to avoid starting from the wrong checkout.
+
 ## [0.4.0] - 2026-03-14
 
 ### Added

@@ -6,12 +6,20 @@ PID_FILE="${ROOT_DIR}/state/rsync-webapp.pid"
 PORT="${RSYNC_WEBAPP_PORT:-8787}"
 AGENT_LABEL="local.rsyncwebapp.control"
 AGENT_FILE="${HOME}/Library/LaunchAgents/${AGENT_LABEL}.plist"
+AGENT_MATCHES_REPO="0"
+if [ -f "${AGENT_FILE}" ] && grep -Fq "${ROOT_DIR}" "${AGENT_FILE}"; then
+  AGENT_MATCHES_REPO="1"
+fi
 
 if lsof -ti "tcp:${PORT}" >/dev/null 2>&1; then
   PID="$(lsof -ti "tcp:${PORT}" | head -1)"
   echo "Rsync Web App: running (PID ${PID})"
   if [ -f "${AGENT_FILE}" ]; then
-    echo "LaunchAgent: installed (${AGENT_LABEL})"
+    if [ "${AGENT_MATCHES_REPO}" = "1" ]; then
+      echo "LaunchAgent: installed (${AGENT_LABEL})"
+    else
+      echo "LaunchAgent: installed but points to a different repo path"
+    fi
   fi
   echo "URL: http://rsync.localhost:${PORT}"
   exit 0

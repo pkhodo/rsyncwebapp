@@ -89,6 +89,23 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
+    private func showUpdateAlert(title: String, text: String, releaseURL: URL?) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.alertStyle = .informational
+        if releaseURL != nil {
+            alert.addButton(withTitle: "Open Release Page")
+            alert.addButton(withTitle: "Close")
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn, let url = releaseURL {
+                NSWorkspace.shared.open(url)
+            }
+        } else {
+            alert.runModal()
+        }
+    }
+
     @objc private func openUI() {
         _ = runShell("cd \(repoPath.escapedShell) && ./bin/start-ui.sh")
         NSWorkspace.shared.open(uiURL)
@@ -116,7 +133,90 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func checkUpdates() {
-        NSWorkspace.shared.open(releasesURL)
+        let result = runShell("curl -fsS --max-time 8 http://127.0.0.1:8787/api/app/update-check?force=1")
+        if result.0 != 0 || result.1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            showUpdateAlert(
+                title: "Check Updates",
+                text: "Could not reach the local service on port 8787.\nStart the service first, then retry.",
+                releaseURL: releasesURL
+            )
+            return
+        }
+
+        guard
+            let data = result.1.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let update = payload["update"] as? [String: Any]
+        else {
+            showUpdateAlert(
+                title: "Check Updates",
+                text: "Received an invalid update response from the local service.",
+                releaseURL: releasesURL
+            )
+            return
+        }
+
+        let ok = (update["ok"] as? Bool) ?? false
+        if !ok {
+            let error = (update["error"] as? String) ?? "Unknown error"
+            showUpdateAlert(
+                title: "Check Updates",
+                text: "Update check failed.\n\(error)",
+                releaseURL: releasesURL
+            )
+            return
+        }
+
+        let channel = (update["channel"] as? String) ?? "unknown"
+        let updateAvailable = (update["update_available"] as? Bool) ?? false
+
+        if channel == "git" {
+            let branch = (update["branch"] as? String) ?? "main"
+            let localCommit = (update["local_commit"] as? String) ?? "unknown"
+            let remoteCommit = (update["remote_commit"] as? String) ?? "unknown"
+            if updateAvailable {
+                showUpdateAlert(
+                    title: "Update Available",
+                    text: "Git channel (\(branch)) has a newer commit.\nLocal: \(localCommit)\nRemote: \(remoteCommit)\nUse 'Update App' to pull latest changes.",
+                    releaseURL: nil
+                )
+            } else {
+                showUpdateAlert(
+                    title: "Up To Date",
+                    text: "Git channel (\(branch)) is up to date.\nCommit: \(localCommit)",
+                    releaseURL: nil
+                )
+            }
+            return
+        }
+
+        if channel == "release" {
+            let latestVersion = (update["latest_version"] as? String) ?? ""
+            let releaseURLText = (update["release_url"] as? String) ?? ""
+            let releaseLink = URL(string: releaseURLText.isEmpty ? releasesURL.absoluteString : releaseURLText)
+            if updateAvailable {
+                let versionLabel = latestVersion.isEmpty ? "A new release is available." : "Version \(latestVersion) is available."
+                showUpdateAlert(
+                    title: "Update Available",
+                    text: "\(versionLabel)\nOpen the release page to download it.",
+                    releaseURL: releaseLink
+                )
+            } else {
+                let versionLabel = latestVersion.isEmpty ? "No newer release detected." : "Latest release: \(latestVersion)"
+                showUpdateAlert(
+                    title: "Up To Date",
+                    text: versionLabel,
+                    releaseURL: nil
+                )
+            }
+            return
+        }
+
+        showUpdateAlert(
+            title: "Check Updates",
+            text: "Update check completed, but channel information was not recognized.",
+            releaseURL: releasesURL
+        )
     }
 
     @objc private func updateApp() {

@@ -13,6 +13,7 @@ __pycache__/
 *.py[cod]
 .mypy_cache/
 .ruff_cache/
+.venv-quality/
 
 # macOS
 .DS_Store

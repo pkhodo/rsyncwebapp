@@ -1,0 +1,259 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-terminal: "IBM Plex Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --font-fancy: "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+}
+
+body[data-theme="terminal"] {
+  --bg: #05070c;
+  --bg-soft: #0d1321;
+  --surface: #0f1729;
+  --surface-soft: #121d35;
+  --line: #24324f;
+  --text: #c6f7e6;
+  --text-soft: #97b8b7;
+  --accent: #00d6b9;
+  --accent-2: #6ee7ff;
+  --ok: #32d296;
+  --warn: #f6c177;
+  --bad: #ff6b85;
+  --font-body: var(--font-terminal);
+}
+
+body[data-theme="fancy"] {
+  --bg: #eef3f8;
+  --bg-soft: #f8fafc;
+  --surface: #ffffff;
+  --surface-soft: #f4f7fb;
+  --line: #d7e0ec;
+  --text: #0e1827;
+  --text-soft: #4f6177;
+  --accent: #0a84ff;
+  --accent-2: #3dd3ff;
+  --ok: #157347;
+  --warn: #aa5f00;
+  --bad: #b42318;
+  --font-body: var(--font-fancy);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply min-h-screen;
+  }
+
+  body {
+    background:
+      radial-gradient(circle at 15% 18%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 42%),
+      radial-gradient(circle at 82% 10%, color-mix(in srgb, var(--accent-2) 13%, transparent), transparent 46%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    transition: background-color 180ms ease, color 180ms ease;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--line) 70%, transparent) transparent;
+  }
+}
+
+@layer components {
+  .panel {
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    border-color: color-mix(in srgb, var(--line) 85%, transparent);
+    box-shadow:
+      0 1px 0 color-mix(in srgb, var(--line) 55%, transparent),
+      0 18px 48px color-mix(in srgb, #000 14%, transparent);
+    backdrop-filter: blur(6px);
+  }
+
+  .btn {
+    @apply inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors;
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+    background: color-mix(in srgb, var(--accent) 18%, var(--surface-soft));
+    color: var(--text);
+  }
+
+  .btn:hover {
+    background: color-mix(in srgb, var(--accent) 28%, var(--surface-soft));
+  }
+
+  .btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .btn-ghost {
+    border-color: color-mix(in srgb, var(--line) 90%, transparent);
+    background: color-mix(in srgb, var(--surface-soft) 92%, transparent);
+  }
+
+  .btn-danger {
+    border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
+    background: color-mix(in srgb, var(--bad) 15%, var(--surface-soft));
+    color: color-mix(in srgb, var(--bad) 65%, var(--text));
+  }
+
+  .input,
+  .textarea,
+  .select {
+    @apply w-full rounded-lg border px-3 py-2 text-sm outline-none transition-colors;
+    border-color: color-mix(in srgb, var(--line) 90%, transparent);
+    background: color-mix(in srgb, var(--surface-soft) 90%, transparent);
+    color: var(--text);
+  }
+
+  .select[multiple] {
+    @apply py-2;
+  }
+
+  .input:focus,
+  .textarea:focus,
+  .select:focus {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+
+  .field-label {
+    @apply mb-1 block text-xs uppercase tracking-wide;
+    color: color-mix(in srgb, var(--text-soft) 90%, transparent);
+  }
+
+  .pre {
+    @apply overflow-auto rounded-xl border p-3 text-xs leading-relaxed;
+    border-color: color-mix(in srgb, var(--line) 90%, transparent);
+    background: color-mix(in srgb, var(--bg-soft) 68%, var(--surface));
+    color: color-mix(in srgb, var(--text) 90%, var(--text-soft));
+    font-family: var(--font-terminal);
+  }
+
+  .mono {
+    font-family: var(--font-terminal);
+  }
+
+  .nav-btn {
+    @apply flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors;
+    border-color: transparent;
+    color: var(--text-soft);
+  }
+
+  .nav-btn:hover {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--line) 80%, transparent);
+    background: color-mix(in srgb, var(--surface-soft) 75%, transparent);
+  }
+
+  .nav-btn.active {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+    background: color-mix(in srgb, var(--accent) 16%, var(--surface-soft));
+  }
+
+  .nav-chip {
+    @apply inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs;
+    border-color: color-mix(in srgb, var(--line) 88%, transparent);
+    background: color-mix(in srgb, var(--surface-soft) 85%, transparent);
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium;
+    border-color: color-mix(in srgb, var(--line) 90%, transparent);
+    background: color-mix(in srgb, var(--surface-soft) 85%, transparent);
+    color: color-mix(in srgb, var(--text) 90%, var(--text-soft));
+  }
+
+  .pill-ok {
+    border-color: color-mix(in srgb, var(--ok) 36%, var(--line));
+    background: color-mix(in srgb, var(--ok) 14%, var(--surface-soft));
+    color: color-mix(in srgb, var(--ok) 70%, var(--text));
+  }
+
+  .pill-warn {
+    border-color: color-mix(in srgb, var(--warn) 36%, var(--line));
+    background: color-mix(in srgb, var(--warn) 14%, var(--surface-soft));
+    color: color-mix(in srgb, var(--warn) 70%, var(--text));
+  }
+
+  .pill-err {
+    border-color: color-mix(in srgb, var(--bad) 38%, var(--line));
+    background: color-mix(in srgb, var(--bad) 14%, var(--surface-soft));
+    color: color-mix(in srgb, var(--bad) 68%, var(--text));
+  }
+
+  .kpi {
+    @apply rounded-xl border p-3;
+    border-color: color-mix(in srgb, var(--line) 88%, transparent);
+    background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
+  }
+
+  .kpi-label {
+    @apply text-xs uppercase tracking-wide opacity-80;
+  }
+
+  .kpi-value {
+    @apply mt-1 text-xl font-semibold;
+    letter-spacing: -0.02em;
+  }
+
+  .row-card {
+    @apply flex items-center justify-between gap-3 rounded-xl border p-3;
+    border-color: color-mix(in srgb, var(--line) 88%, transparent);
+    background: color-mix(in srgb, var(--surface-soft) 72%, transparent);
+  }
+
+  .job-card {
+    @apply rounded-xl border p-3;
+    border-color: color-mix(in srgb, var(--line) 86%, transparent);
+    background: color-mix(in srgb, var(--surface-soft) 76%, transparent);
+  }
+
+  .check {
+    @apply flex items-center gap-2 rounded-lg border px-3 py-2 text-sm;
+    border-color: color-mix(in srgb, var(--line) 86%, transparent);
+    background: color-mix(in srgb, var(--surface-soft) 84%, transparent);
+  }
+
+  .check input {
+    accent-color: var(--accent);
+  }
+
+  .toast-wrap {
+    @apply pointer-events-none fixed bottom-4 right-4 z-50 flex w-[min(92vw,420px)] flex-col gap-2;
+  }
+
+  .toast {
+    @apply rounded-lg border px-3 py-2 text-sm;
+    border-color: color-mix(in srgb, var(--line) 88%, transparent);
+    background: color-mix(in srgb, var(--surface) 95%, transparent);
+    box-shadow: 0 8px 24px color-mix(in srgb, #000 24%, transparent);
+  }
+
+  .toast.ok {
+    border-color: color-mix(in srgb, var(--ok) 35%, var(--line));
+  }
+
+  .toast.warn {
+    border-color: color-mix(in srgb, var(--warn) 35%, var(--line));
+  }
+
+  .toast.err {
+    border-color: color-mix(in srgb, var(--bad) 35%, var(--line));
+  }
+}
+
+body[data-compact="1"] .panel {
+  @apply p-3;
+}
+
+body[data-compact="1"] .btn {
+  @apply px-2.5 py-1 text-xs;
+}
+
+body[data-compact="1"] .kpi-value {
+  @apply text-lg;
+}

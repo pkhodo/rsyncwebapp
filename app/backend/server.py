@@ -26,7 +26,9 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
-FRONTEND_DIR = ROOT / "app" / "frontend"
+FRONTEND_SRC_DIR = ROOT / "app" / "frontend"
+FRONTEND_DIST_DIR = FRONTEND_SRC_DIR / "dist"
+FRONTEND_DIR = FRONTEND_DIST_DIR if FRONTEND_DIST_DIR.exists() else FRONTEND_SRC_DIR
 STATE_DIR = ROOT / "state"
 LOG_DIR = STATE_DIR / "logs"
 PROFILE_PATH = ROOT / "profiles" / "jobs.json"

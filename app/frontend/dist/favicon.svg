@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="rsync.wa">
+  <defs>
+    <linearGradient id="g" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0A84FF"/>
+      <stop offset="1" stop-color="#00D6B9"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="52" height="52" rx="14" fill="#0B1320"/>
+  <path d="M15 26h24" stroke="url(#g)" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M31 18l8 8-8 8" fill="none" stroke="url(#g)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M49 38H25" stroke="#C8FCE8" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M33 30l-8 8 8 8" fill="none" stroke="#C8FCE8" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
