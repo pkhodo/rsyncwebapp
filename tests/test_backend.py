@@ -15,6 +15,7 @@ def _base_payload():
         "remote_path": "/srv/source",
         "local_path": "/tmp/local-target",
         "mode": "mirror",
+        "mirror_confirmed": True,
         "dry_run": False,
         "auto_retry": True,
         "excludes": [],
@@ -55,6 +56,19 @@ def _caps(progress2=True, append_verify=True, contimeout=True):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_rejects_mirror_without_confirmation(self):
+        payload = _base_payload()
+        payload["mirror_confirmed"] = False
+        with self.assertRaises(RuntimeError):
+            server.normalize_job_payload(payload)
+
+    def test_allows_append_without_confirmation(self):
+        payload = _base_payload()
+        payload["mode"] = "append"
+        payload["mirror_confirmed"] = False
+        normalized = server.normalize_job_payload(payload)
+        self.assertEqual(normalized["mode"], "append")
+
     def test_rejects_relative_local_path(self):
         payload = _base_payload()
         payload["local_path"] = "relative/path"

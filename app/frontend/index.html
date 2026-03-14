@@ -25,6 +25,7 @@
           <button id="compactModeBtn" type="button">Compact Mode: Off</button>
           <button id="toggleSectionsBtn" type="button">Collapse All</button>
           <button id="toggleAutoSyncBtn" type="button">Pause Auto-Sync</button>
+          <button id="copyDiagnosticsBtn" type="button">Copy Diagnostics</button>
           <button id="refreshBtn" type="button">Refresh</button>
           <button id="restartServiceBtn" type="button">Restart App</button>
           <button id="stopServiceBtn" type="button">Stop App</button>
@@ -47,6 +48,20 @@
         <div id="summary" class="summary-line"></div>
         <div id="systemChecks" class="checks-grid"></div>
         <div id="connectivityDetails" class="connectivity-list"></div>
+      </div>
+    </section>
+
+    <section class="panel wizard collapsible" data-section="wizard">
+      <div class="section-head">
+        <h2>First-Run Wizard</h2>
+        <button class="collapse-btn" type="button" data-target-section="wizard">Collapse</button>
+      </div>
+      <div class="section-body">
+        <div class="log-header">
+          <strong id="wizardSummary">Checking onboarding status...</strong>
+          <button type="button" id="refreshWizardBtn">Refresh wizard</button>
+        </div>
+        <div id="wizardSteps" class="wizard-steps"></div>
       </div>
     </section>
 
@@ -145,6 +160,7 @@
         <div class="checks">
           <label><input type="checkbox" id="dryRun"> Dry run by default</label>
           <label><input type="checkbox" id="autoRetry" checked> Auto-retry on network outage (ZTNA-safe)</label>
+          <label><input type="checkbox" id="mirrorConfirmed"> Mirror delete confirmed (required for mirror mode)</label>
         </div>
 
         <div class="row-buttons">

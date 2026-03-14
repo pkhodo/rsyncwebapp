@@ -17,7 +17,7 @@ function New-RsyncShortcut {
   $shortcut.Save()
 }
 
-$startCommand = "Set-Location '$root'; if (-not (Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue)) { Start-Process python -ArgumentList 'app\backend\server.py' -WindowStyle Hidden }; Start-Sleep -Seconds 1; Start-Process 'http://rsync.localhost:8787'"
+$startCommand = "Set-Location '$root'; powershell -NoProfile -ExecutionPolicy Bypass -File '.\bin\windows-quickstart.ps1'"
 $stopCommand = "Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }; Write-Host 'Stopped listeners on 8787.'"
 $statusCommand = "if (Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue) { Write-Host 'Rsync Web App: running on 8787' } else { Write-Host 'Rsync Web App: not running' }; Pause"
 

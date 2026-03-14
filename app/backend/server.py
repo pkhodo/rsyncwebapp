@@ -219,6 +219,13 @@ class HistoryStore:
             "events": [dict(row) for row in events],
         }
 
+    def has_any_dry_run(self) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM job_runs WHERE dry_run = 1 LIMIT 1"
+            ).fetchone()
+        return bool(row)
+
 @dataclass
 class JobConfig:
     id: str
@@ -227,6 +234,7 @@ class JobConfig:
     remote_path: str
     local_path: str
     mode: str = "mirror"  # mirror|append
+    mirror_confirmed: bool = False
     dry_run: bool = False
     auto_retry: bool = True
     excludes: list[str] = field(default_factory=list)
@@ -880,6 +888,72 @@ class AppState:
         self.get(job_id)
         return self.history.get_recent(job_id, limit=limit)
 
+    def onboarding_status(self) -> dict[str, Any]:
+        checks = self.system_checks()
+        jobs = self.list_jobs()
+        connectivity = self.get_connectivity(force=True)
+        servers = list((connectivity.get("servers") or {}).values())
+        reachable = any(bool(item.get("reachable")) for item in servers)
+        has_job = len(jobs) > 0
+        has_dry_run = self.history.has_any_dry_run()
+        if not has_job:
+            ssh_state = "pending_no_job"
+        elif connectivity.get("paused"):
+            ssh_state = "paused"
+        else:
+            ssh_state = "ok" if reachable else "pending"
+
+        steps = [
+            {
+                "id": "dependencies",
+                "label": "Install Dependencies",
+                "state": "ok" if checks.get("ready") else "pending",
+                "detail": "python3, ssh, rsync",
+            },
+            {
+                "id": "first_job",
+                "label": "Create First Job",
+                "state": "ok" if has_job else "pending",
+                "detail": f"{len(jobs)} job(s) configured",
+            },
+            {
+                "id": "ssh_check",
+                "label": "Verify SSH Reachability",
+                "state": ssh_state,
+                "detail": f"{sum(1 for x in servers if x.get('reachable'))}/{len(servers)} targets reachable",
+            },
+            {
+                "id": "first_dry_run",
+                "label": "Run First Dry Run",
+                "state": "ok" if has_dry_run else "pending",
+                "detail": "Execute at least one dry-run before live sync.",
+            },
+        ]
+        complete = all(step["state"] == "ok" for step in steps)
+        return {
+            "complete": complete,
+            "steps": steps,
+            "checked_at": now_iso(),
+        }
+
+    def diagnostics_bundle(self) -> dict[str, Any]:
+        with self._lock:
+            jobs_snapshot = [job.serialize() for job in self.jobs.values()]
+        job_logs: dict[str, str] = {}
+        for item in jobs_snapshot:
+            cfg = item["config"]
+            job_logs[cfg["id"]] = self.get(cfg["id"]).load_log_tail(limit=80)
+        return {
+            "generated_at": now_iso(),
+            "service": self.service_status(),
+            "system_checks": self.system_checks(),
+            "connectivity": self.get_connectivity(force=False),
+            "onboarding": self.onboarding_status(),
+            "jobs": jobs_snapshot,
+            "service_logs": self.service_logs(tail=120),
+            "job_logs": job_logs,
+        }
+
     def preview_command(self, payload: dict[str, Any]) -> dict[str, Any]:
         preview_payload = dict(payload)
         preview_payload["id"] = preview_payload.get("id") or "preview-job"
@@ -1119,6 +1193,12 @@ class AppState:
                     "script": "install-windows-shortcuts.ps1",
                     "description": "Create PowerShell desktop shortcuts.",
                 },
+                {
+                    "id": "run_windows_quickstart",
+                    "label": "Start App (Windows)",
+                    "script": "windows-quickstart.ps1",
+                    "description": "One-click start flow for Windows.",
+                },
             ]
         return {"platform": info, "actions": actions, "checked_at": now_iso()}
 
@@ -1179,6 +1259,7 @@ class AppState:
 def normalize_job_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
     normalized["mode"] = normalized.get("mode", "mirror")
+    normalized["mirror_confirmed"] = bool(normalized.get("mirror_confirmed", False))
     normalized["dry_run"] = bool(normalized.get("dry_run", False))
     normalized["auto_retry"] = bool(normalized.get("auto_retry", True))
 
@@ -1217,6 +1298,8 @@ def validate_job_payload(payload: dict[str, Any]) -> None:
 
     if payload.get("mode") not in {"mirror", "append"}:
         raise RuntimeError("Mode must be 'mirror' or 'append'")
+    if payload.get("mode") == "mirror" and not bool(payload.get("mirror_confirmed", False)):
+        raise RuntimeError("Mirror mode requires explicit delete confirmation.")
 
     local_path = str(payload["local_path"])
     remote_path = str(payload["remote_path"])
@@ -1354,6 +1437,12 @@ class RequestHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/system/checks":
             self._send_json({"ok": True, "checks": self.app_state.system_checks()})
+            return
+        if path == "/api/onboarding/status":
+            self._send_json({"ok": True, "onboarding": self.app_state.onboarding_status()})
+            return
+        if path == "/api/diagnostics":
+            self._send_json({"ok": True, "diagnostics": self.app_state.diagnostics_bundle()})
             return
         if path == "/api/setup/options":
             self._send_json({"ok": True, "setup": self.app_state.setup_options()})

@@ -34,6 +34,8 @@ export function createUI(elements, keys) {
     systemChecksEl,
     setupSummaryEl,
     setupActionsEl,
+    wizardSummaryEl,
+    wizardStepsEl,
     connectivityDetailsEl,
     connectivityStatusEl,
     serviceStatusEl,
@@ -263,6 +265,49 @@ export function createUI(elements, keys) {
       .join("");
   }
 
+  function renderOnboarding(onboarding, error = null) {
+    if (error) {
+      wizardSummaryEl.textContent = `Onboarding unavailable: ${error}`;
+      wizardStepsEl.innerHTML = "";
+      return;
+    }
+    const steps = (onboarding && onboarding.steps) || [];
+    if (steps.length === 0) {
+      wizardSummaryEl.textContent = "No onboarding steps available.";
+      wizardStepsEl.innerHTML = "";
+      return;
+    }
+    wizardSummaryEl.textContent = onboarding.complete
+      ? "Onboarding complete. You are ready for normal operations."
+      : "Complete these steps once to make first sync safe.";
+    const actionByStep = {
+      dependencies: { id: "install-deps", label: "Install Dependencies" },
+      first_job: { id: "open-editor", label: "Open Job Editor" },
+      ssh_check: { id: "test-ssh", label: "Test SSH" },
+      first_dry_run: { id: "run-dry", label: "Run Dry Run" },
+    };
+    wizardStepsEl.innerHTML = steps
+      .map((step) => {
+        const ok = step.state === "ok";
+        const warn = step.state === "pending" || step.state === "pending_no_job" || step.state === "paused";
+        const cls = ok ? "ok" : warn ? "warn" : "err";
+        const action = actionByStep[step.id];
+        const actionBtn = action && !ok
+          ? `<button type="button" data-wizard-action="${action.id}">${action.label}</button>`
+          : `<button type="button" disabled>${ok ? "Done" : "Pending"}</button>`;
+        return `
+          <article class="wizard-step ${cls}">
+            <div>
+              <div class="setup-title">${step.label}</div>
+              <p>${step.detail || "-"}</p>
+            </div>
+            ${actionBtn}
+          </article>
+        `;
+      })
+      .join("");
+  }
+
   function renderHistory(jobId, history, error = null) {
     if (!jobId) {
       historyJobEl.textContent = "No job selected";
@@ -479,11 +524,13 @@ export function createUI(elements, keys) {
     renderConnectivity,
     renderSystemChecks,
     renderSetup,
+    renderOnboarding,
     renderJobs,
     renderServiceLogs,
     renderHistory,
     setCompactMode,
     isCompactMode,
+    setSectionCollapsed,
     setAllSectionsCollapsed,
     bootLayoutMode,
     bindSectionToggleButtons,

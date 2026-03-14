@@ -12,7 +12,18 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Build release bundles
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          PREFIX="rsyncwebapp-${VERSION}"
+          git archive --format=zip --prefix="${PREFIX}/" -o "${PREFIX}.zip" "${GITHUB_REF}"
+          git archive --format=tar.gz --prefix="${PREFIX}/" -o "${PREFIX}.tar.gz" "${GITHUB_REF}"
+          sha256sum "${PREFIX}.zip" "${PREFIX}.tar.gz" > "${PREFIX}.sha256"
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          files: |
+            rsyncwebapp-${{ github.ref_name }}.zip
+            rsyncwebapp-${{ github.ref_name }}.tar.gz
+            rsyncwebapp-${{ github.ref_name }}.sha256

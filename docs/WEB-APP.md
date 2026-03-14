@@ -44,6 +44,13 @@ Remove menu bar controller:
 ./bin/uninstall-menubar.sh
 ```
 
+Optional signing/notarization for distributing the menu bar helper:
+
+```bash
+./bin/sign-menubar.sh "Developer ID Application: YOUR NAME (TEAMID)"
+./bin/notarize-menubar.sh rsyncwebapp-notary
+```
+
 macOS desktop shortcuts:
 
 ```bash
@@ -68,19 +75,28 @@ Windows desktop shortcuts (PowerShell):
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install-windows-shortcuts.ps1
 ```
 
+Windows one-click starter:
+
+```powershell
+.\bin\get-started-windows.bat
+```
+
 ## First Configuration
 
 1. Open the UI.
-2. Use **Setup Center** and run **Install Dependencies** first (`python3`, `ssh`, `rsync`).
-3. Use remaining one-click helpers (autostart/menu/tray/shortcuts where available).
-4. Create jobs with your own:
+2. Complete the **First-Run Wizard** cards from left to right.
+3. Use **Setup Center** and run **Install Dependencies** first (`python3`, `ssh`, `rsync`).
+4. Use remaining one-click helpers (autostart/menu/tray/shortcuts where available).
+5. Create jobs with your own:
    - SSH server (`user@host`)
    - absolute remote path (`/remote/source/path`)
    - absolute local path (`/absolute/local/path`)
-5. Keep `dry run` enabled for first validation.
-6. Run `Test Conn` and `Preview Deletes`.
-7. Disable dry-run only after validation.
-8. Use `Pause Auto-Sync` when ZTNA is intentionally offline for extended periods.
+6. For `mirror` mode, explicitly enable **Mirror delete confirmed** in the editor.
+7. Keep `dry run` enabled for first validation.
+8. Run `Test Conn` and `Preview Deletes`.
+9. Disable dry-run only after validation.
+10. Use `Pause Auto-Sync` when ZTNA is intentionally offline for extended periods.
+11. Use **Copy Diagnostics** in the header when you need a full state snapshot for debugging/support.
 
 ## Editor Modes
 
@@ -135,6 +151,8 @@ When **Pause Auto-Sync** is enabled:
 - `GET /api/jobs/{id}/history`
 - `GET /api/connectivity`
 - `GET /api/system/checks`
+- `GET /api/onboarding/status`
+- `GET /api/diagnostics`
 - `GET /api/setup/options`
 - `GET /api/service/status`
 - `GET /api/service/settings`
