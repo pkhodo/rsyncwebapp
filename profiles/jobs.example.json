@@ -1,0 +1,27 @@
+{
+  "jobs": [
+    {
+      "id": "example-assets",
+      "name": "Example Assets",
+      "server": "user@example-host",
+      "remote_path": "/srv/example/assets",
+      "local_path": "/absolute/path/to/local/assets",
+      "mode": "mirror",
+      "dry_run": true,
+      "auto_retry": true,
+      "excludes": [
+        ".DS_Store",
+        "tmp/*"
+      ],
+      "extra_args": [],
+      "timeout_seconds": 60,
+      "contimeout_seconds": 15,
+      "retry_initial_seconds": 10,
+      "retry_max_seconds": 300,
+      "bwlimit_kbps": 0,
+      "nice_level": 0,
+      "allowed_start_hour": -1,
+      "allowed_end_hour": -1
+    }
+  ]
+}

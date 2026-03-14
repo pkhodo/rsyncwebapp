@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rsync Web App</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-theme="terminal">
+  <main class="layout">
+    <section class="panel header">
+      <div class="header-main">
+        <div>
+          <h1>Rsync Web App</h1>
+          <p>Browser-based rsync manager with retry, preview, and one-way safety.</p>
+          <div class="host-badge">Local URL: <code>http://rsync.localhost:8787</code></div>
+        </div>
+        <div class="header-actions">
+          <label>Theme Preset
+            <select id="themeSelect">
+              <option value="terminal">Terminal</option>
+              <option value="fancy">Fancy</option>
+            </select>
+          </label>
+          <button id="compactModeBtn" type="button">Compact Mode: Off</button>
+          <button id="toggleSectionsBtn" type="button">Collapse All</button>
+          <button id="toggleAutoSyncBtn" type="button">Pause Auto-Sync</button>
+          <button id="refreshBtn" type="button">Refresh</button>
+          <button id="restartServiceBtn" type="button">Restart App</button>
+          <button id="stopServiceBtn" type="button">Stop App</button>
+        </div>
+      </div>
+      <div class="ribbon">
+        <span id="serviceStatus" class="status-pill">Service: loading...</span>
+        <span id="autoSyncStatus" class="status-pill">Auto-sync: loading...</span>
+        <span id="connectivityStatus" class="status-pill">Connectivity: checking...</span>
+      </div>
+    </section>
+
+    <section class="panel summary collapsible" data-section="summary">
+      <div class="section-head">
+        <h2>Overview</h2>
+        <button class="collapse-btn" type="button" data-target-section="summary">Collapse</button>
+      </div>
+      <div class="section-body">
+        <div id="kpiGrid" class="kpi-grid"></div>
+        <div id="summary" class="summary-line"></div>
+        <div id="systemChecks" class="checks-grid"></div>
+        <div id="connectivityDetails" class="connectivity-list"></div>
+      </div>
+    </section>
+
+    <section class="panel setup collapsible" data-section="setup">
+      <div class="section-head">
+        <h2>Setup Center</h2>
+        <button class="collapse-btn" type="button" data-target-section="setup">Collapse</button>
+      </div>
+      <div class="section-body">
+        <div class="log-header">
+          <strong id="setupSummary">Detecting platform...</strong>
+          <button type="button" id="refreshSetupBtn">Refresh setup</button>
+        </div>
+        <div id="setupActions" class="setup-actions"></div>
+      </div>
+    </section>
+
+    <section class="panel form collapsible" data-section="form">
+      <div class="section-head">
+        <h2>Job Editor</h2>
+        <button class="collapse-btn" type="button" data-target-section="form">Collapse</button>
+      </div>
+      <div class="section-body">
+      <form id="jobForm">
+        <div class="mode-switch">
+          <span>Editor Mode</span>
+          <div class="mode-buttons">
+            <button type="button" data-editor-mode="basic" class="mode-btn active">Basic</button>
+            <button type="button" data-editor-mode="advanced" class="mode-btn">Advanced</button>
+            <button type="button" data-editor-mode="expert" class="mode-btn">Expert</button>
+          </div>
+        </div>
+        <div class="grid">
+          <label class="field-advanced">ID
+            <input type="text" id="jobId" placeholder="auto-generated for new jobs">
+          </label>
+          <label>Name
+            <input type="text" id="name" required>
+          </label>
+          <label>SSH Server
+            <input type="text" id="server" required placeholder="user@host">
+          </label>
+          <label>Mode
+            <select id="mode">
+              <option value="mirror">mirror (sync + delete)</option>
+              <option value="append">append (keep local, add new)</option>
+            </select>
+          </label>
+          <label>Remote Path
+            <input type="text" id="remotePath" required placeholder="/remote/path">
+          </label>
+          <label>Local Path
+            <input type="text" id="localPath" required placeholder="/absolute/local/path">
+          </label>
+          <label class="field-advanced">Timeout (s)
+            <input type="number" id="timeoutSeconds" value="60" min="5">
+          </label>
+          <label class="field-advanced">Connect Timeout (s)
+            <input type="number" id="contimeoutSeconds" value="15" min="3">
+          </label>
+          <label class="field-advanced">Retry Initial (s)
+            <input type="number" id="retryInitialSeconds" value="10" min="1">
+          </label>
+          <label class="field-advanced">Retry Max (s)
+            <input type="number" id="retryMaxSeconds" value="300" min="5">
+          </label>
+          <label class="field-advanced">Bandwidth Limit (KB/s)
+            <input type="number" id="bwlimitKbps" value="0" min="0">
+          </label>
+          <label class="field-advanced">CPU Priority (nice)
+            <input type="number" id="niceLevel" value="0" min="-20" max="19">
+          </label>
+          <label class="field-advanced">Allowed Start Hour (0-23, -1=off)
+            <input type="number" id="allowedStartHour" value="-1" min="-1" max="23">
+          </label>
+          <label class="field-advanced">Allowed End Hour (0-23, -1=off)
+            <input type="number" id="allowedEndHour" value="-1" min="-1" max="23">
+          </label>
+        </div>
+
+        <label class="field-advanced">Exclude Patterns (one per line)
+          <textarea id="excludes" rows="4" placeholder=".git&#10;.DS_Store"></textarea>
+        </label>
+
+        <label class="field-expert">Extra Rsync Args (one per line)
+          <textarea id="extraArgs" rows="4" placeholder="--size-only"></textarea>
+        </label>
+        <div class="field-expert command-preview">
+          <div class="log-header">
+            <strong>Command Preview</strong>
+            <button type="button" id="previewCommandBtn">Build command</button>
+          </div>
+          <pre id="commandPreview">Expert mode shows the exact rsync command generated by current form values.</pre>
+        </div>
+
+        <div class="checks">
+          <label><input type="checkbox" id="dryRun"> Dry run by default</label>
+          <label><input type="checkbox" id="autoRetry" checked> Auto-retry on network outage (ZTNA-safe)</label>
+        </div>
+
+        <div class="row-buttons">
+          <button type="submit">Save Job</button>
+          <button type="button" id="clearBtn">Clear Form</button>
+        </div>
+      </form>
+      </div>
+    </section>
+
+    <section class="panel jobs collapsible" data-section="jobs">
+      <div class="section-head">
+        <h2>Jobs</h2>
+        <button class="collapse-btn" type="button" data-target-section="jobs">Collapse</button>
+      </div>
+      <div class="section-body">
+        <div id="jobs"></div>
+      </div>
+    </section>
+
+    <section class="panel logs collapsible" data-section="logs">
+      <div class="section-head">
+        <h2>Log Tail</h2>
+        <button class="collapse-btn" type="button" data-target-section="logs">Collapse</button>
+      </div>
+      <div class="section-body">
+        <div class="log-header">
+          <strong id="selectedJob">No job selected</strong>
+          <button type="button" id="refreshLogBtn">Refresh log</button>
+        </div>
+        <pre id="logContent">Select a job and click "Log".</pre>
+      </div>
+    </section>
+
+    <section class="panel history collapsible" data-section="history">
+      <div class="section-head">
+        <h2>Run History</h2>
+        <button class="collapse-btn" type="button" data-target-section="history">Collapse</button>
+      </div>
+      <div class="section-body">
+        <div class="log-header">
+          <strong id="historyJob">No job selected</strong>
+          <button type="button" id="refreshHistoryBtn">Refresh history</button>
+        </div>
+        <pre id="historyContent">Select a job and click "Log" to load run/event history.</pre>
+      </div>
+    </section>
+
+    <section class="panel preview collapsible" data-section="preview">
+      <div class="section-head">
+        <h2>Delete Preview</h2>
+        <button class="collapse-btn" type="button" data-target-section="preview">Collapse</button>
+      </div>
+      <div class="section-body">
+        <div class="log-header">
+          <strong id="previewJob">No preview yet</strong>
+          <button type="button" id="clearPreviewBtn">Clear preview</button>
+        </div>
+        <pre id="previewContent">Use "Preview Deletes" on a job to review what mirror mode would delete.</pre>
+      </div>
+    </section>
+
+    <section class="panel service-logs collapsible" data-section="service-logs">
+      <div class="section-head">
+        <h2>Service Logs</h2>
+        <button class="collapse-btn" type="button" data-target-section="service-logs">Collapse</button>
+      </div>
+      <div class="section-body">
+        <div class="log-header">
+          <strong>launchagent/app logs</strong>
+          <button type="button" id="refreshServiceLogBtn">Refresh service logs</button>
+        </div>
+        <pre id="serviceLogContent">Loading service logs...</pre>
+      </div>
+    </section>
+  </main>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

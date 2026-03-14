@@ -1,0 +1,20 @@
+# Runtime state
+state/logs/
+state/*.pid
+state/*.db
+state/*.json
+
+# Local user configuration
+profiles/jobs.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# Node
+node_modules/
