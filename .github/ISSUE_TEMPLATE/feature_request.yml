@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest an improvement or new capability
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user problem does this solve?
+      placeholder: "It is hard to..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior or UI/API change you want.
+      placeholder: "Add a button that..."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative approaches or tools considered.
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - High (blocks workflow)
+        - Medium (major quality-of-life)
+        - Low (nice-to-have)
+    validations:
+      required: true

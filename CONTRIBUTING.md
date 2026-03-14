@@ -88,3 +88,10 @@ bash -n bin/*.sh
 - Include a clear summary of user-facing changes.
 - Call out security implications.
 - Include screenshots for UI updates.
+- Use issue and PR templates for consistency.
+
+## Maintainer Defaults
+
+- Keep `main` protected (required checks, linear history, no force-push).
+- Keep `enforce_admins` disabled so solo maintainers can ship urgent hotfixes.
+- Label beginner-friendly tasks with `good first issue`.
