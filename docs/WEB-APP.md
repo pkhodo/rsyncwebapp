@@ -8,6 +8,14 @@ Default URL:
 http://rsync.localhost:8787
 ```
 
+## Navigation Areas
+
+- Overview
+- Jobs
+- Job Builder
+- Logs & Diagnostics
+- Setup & Updates
+
 ## Start / Stop
 
 ```bash

@@ -28,8 +28,16 @@ cd rsyncwebapp
 ## Highlights
 
 - Browser UI at `http://rsync.localhost:8787`
+- Multi-screen console layout:
+  - Overview
+  - Jobs
+  - Job Builder
+  - Logs & Diagnostics
+  - Setup & Updates
 - Job editor with Basic / Advanced / Expert modes
-- Two curated themes: `Terminal` and `Fancy`
+- Two curated themes:
+  - `Terminal` (hacker-style, high contrast)
+  - `Fancy` (clean, Apple-like, minimal)
 - Dry run, delete preview, test connection
 - Pause/resume/cancel/start controls
 - Auto-retry when network/SSH is unavailable

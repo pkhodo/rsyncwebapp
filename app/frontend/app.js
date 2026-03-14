@@ -40,6 +40,8 @@ const elements = {
   previewCommandBtn: document.getElementById("previewCommandBtn"),
   commandPreviewEl: document.getElementById("commandPreview"),
   editorModeButtons: document.querySelectorAll(".mode-btn[data-editor-mode]"),
+  navButtons: document.querySelectorAll(".nav-btn[data-view]"),
+  viewPanels: document.querySelectorAll(".view[data-view-panel]"),
   sectionToggleButtons: document.querySelectorAll(".collapse-btn[data-target-section]"),
   collapsiblePanels: document.querySelectorAll(".panel.collapsible[data-section]"),
   jobForm: document.getElementById("jobForm"),
@@ -52,6 +54,7 @@ const STORAGE_KEYS = {
   collapsedKey: "rsync_webapp_collapsed_sections",
 };
 const EDITOR_MODE_KEY = "rsync_webapp_editor_mode";
+const VIEW_MODE_KEY = "rsync_webapp_current_view";
 const UPDATE_CHECK_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const UPDATE_LAST_CHECK_KEY = "rsync_webapp_last_update_check_ms";
 
@@ -91,6 +94,26 @@ function setEditorMode(mode, persist = true) {
 
 function bootEditorMode() {
   setEditorMode(localStorage.getItem(EDITOR_MODE_KEY) || "basic", false);
+}
+
+function setView(viewKey, persist = true) {
+  const allowed = new Set(["overview", "jobs", "builder", "logs", "setup"]);
+  const next = allowed.has(viewKey) ? viewKey : "overview";
+  elements.viewPanels.forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.viewPanel === next);
+  });
+  elements.navButtons.forEach((btn) => {
+    const active = btn.dataset.view === next;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-current", active ? "page" : "false");
+  });
+  if (persist) {
+    localStorage.setItem(VIEW_MODE_KEY, next);
+  }
+}
+
+function bootViewMode() {
+  setView(localStorage.getItem(VIEW_MODE_KEY) || "overview", false);
 }
 
 function updateMirrorConfirmControl(forceReconfirm = false) {
@@ -416,13 +439,17 @@ async function refreshHistory() {
 async function runAction(action, id) {
   if (action === "edit") {
     const job = jobsCache.find((item) => item.config.id === id);
-    if (job) setFormFromJob(job);
+    if (job) {
+      setFormFromJob(job);
+      setView("builder");
+    }
     return;
   }
   if (action === "log") {
     currentLogJobId = id;
     currentHistoryJobId = id;
     elements.selectedJobEl.textContent = `Job: ${id}`;
+    setView("logs");
     await Promise.all([refreshLog(), refreshHistory()]);
     return;
   }
@@ -459,6 +486,7 @@ async function runAction(action, id) {
       result.deletes_preview.length > 0
         ? result.deletes_preview.join("\n")
         : `No delete operations detected.\n\nTail:\n${result.tail || "(empty)"}`;
+    setView("logs");
     ui.showToast(`Preview complete for ${id}`, result.exit_code === 0 ? "ok" : "warn");
     return;
   }
@@ -492,6 +520,7 @@ elements.jobForm.addEventListener("submit", async (event) => {
     }
     await Promise.all([refreshJobs(), refreshOnboarding()]);
     clearForm();
+    setView("jobs");
   } catch (error) {
     ui.showToast(error.message, "err", 6000);
   }
@@ -565,6 +594,10 @@ elements.editorModeButtons.forEach((btn) => {
   btn.addEventListener("click", () => setEditorMode(btn.dataset.editorMode));
 });
 
+elements.navButtons.forEach((btn) => {
+  btn.addEventListener("click", () => setView(btn.dataset.view, true));
+});
+
 elements.toggleAutoSyncBtn.addEventListener("click", async () => {
   const path = servicePause ? "/api/service/resume-auto" : "/api/service/pause-auto";
   try {
@@ -633,6 +666,7 @@ elements.wizardStepsEl.addEventListener("click", async (event) => {
     }
     if (action === "open-editor") {
       ui.setSectionCollapsed("form", false, true);
+      setView("builder");
       document.getElementById("name").focus();
       return;
     }
@@ -660,6 +694,7 @@ ui.bindSectionToggleButtons();
 ui.bootTheme();
 ui.bootLayoutMode();
 bootEditorMode();
+bootViewMode();
 updateMirrorConfirmControl();
 
 setInterval(() => {
