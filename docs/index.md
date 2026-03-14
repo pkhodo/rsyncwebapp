@@ -29,12 +29,15 @@ http://rsync.localhost:8787
 
 ## Documentation Map
 
-- [Web App Guide](WEB-APP.md)
-- [Architecture](ARCHITECTURE.md)
-- [Migrations](MIGRATIONS.md)
-- [Security Audit](SECURITY-AUDIT.md)
-- [UX Voice](UX-VOICE.md)
-- [Apple Signing](APPLE-SIGNING.md)
+- User Docs:
+  - [Web App Guide](WEB-APP.md)
+- Ops & Security:
+  - [Architecture](ARCHITECTURE.md)
+  - [Security Audit](SECURITY-AUDIT.md)
+- Maintainer Docs:
+  - [Migrations](MIGRATIONS.md)
+  - [UX Voice](UX-VOICE.md)
+  - [Apple Signing (optional)](APPLE-SIGNING.md)
 
 ## Safety Model
 

@@ -24,10 +24,13 @@ plugins:
   - search
 
 nav:
-  - Home: index.md
-  - Web App Guide: WEB-APP.md
-  - Architecture: ARCHITECTURE.md
-  - Migrations: MIGRATIONS.md
-  - Security Audit: SECURITY-AUDIT.md
-  - UX Voice: UX-VOICE.md
-  - Apple Signing: APPLE-SIGNING.md
+  - User Docs:
+      - Quick Start: index.md
+      - Web App Guide: WEB-APP.md
+  - Ops & Security:
+      - Architecture: ARCHITECTURE.md
+      - Security Audit: SECURITY-AUDIT.md
+  - Maintainer Docs:
+      - Migrations: MIGRATIONS.md
+      - UX Voice: UX-VOICE.md
+      - Apple Signing (Optional): APPLE-SIGNING.md
