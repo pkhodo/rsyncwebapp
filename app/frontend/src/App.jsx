@@ -299,15 +299,21 @@ export default function App() {
   const updateStatusPill = useMemo(() => {
     if (!updateInfo?.ok) return { text: "Update status unknown", level: "warn" };
     if (updateInfo.update_available) {
-      if (updateInfo.channel === "git") {
+      if (updateInfo.channel === "git" || updateInfo.channel === "github_commit") {
         return { text: `Update available (${updateInfo.remote_commit || "origin"})`, level: "warn" };
       }
-      return { text: `Update available v${updateInfo.latest_version || "new"}`, level: "warn" };
+      if (updateInfo.channel === "release") {
+        return { text: `Update available v${updateInfo.latest_version || "new"}`, level: "warn" };
+      }
+      return { text: "Update available", level: "warn" };
     }
-    if (updateInfo.channel === "git") {
+    if (updateInfo.channel === "git" || updateInfo.channel === "github_commit") {
       return { text: `Up to date ${updateInfo.local_commit || ""}`.trim(), level: "ok" };
     }
-    return { text: `Up to date v${updateInfo.current_version || "-"}`, level: "ok" };
+    if (updateInfo.channel === "release") {
+      return { text: `Up to date v${updateInfo.current_version || "-"}`, level: "ok" };
+    }
+    return { text: "No update detected", level: "ok" };
   }, [updateInfo]);
 
   const toggleSection = (key) => {
@@ -418,10 +424,22 @@ export default function App() {
     setUpdateInfo(data.update || null);
     if (!showToast) return;
     if (data.update?.ok && data.update?.update_available) {
-      addToast("Update available. You can apply it from Setup > Update App.", "warn", 4200);
+      if (data.update?.channel === "release") {
+        addToast("New release available. Use Setup > Update App.", "warn", 4200);
+        return;
+      }
+      addToast("New commit available. Use Setup > Update App.", "warn", 4200);
       return;
     }
-    addToast("No update available right now.", "ok", 2400);
+    if (data.update?.ok && data.update?.channel === "release") {
+      addToast("No newer release detected.", "ok", 2400);
+      return;
+    }
+    if (data.update?.ok && (data.update?.channel === "git" || data.update?.channel === "github_commit")) {
+      addToast(`No newer commit on ${data.update?.branch || "main"}.`, "ok", 2400);
+      return;
+    }
+    addToast("Update check completed.", "ok", 2400);
   };
 
   const refreshAll = async () => {
@@ -1911,9 +1929,9 @@ export default function App() {
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-sm">
         <div className="mb-2 font-semibold">Update channel</div>
         <div className="mb-2 opacity-80">
-          {updateInfo?.channel === "git"
-            ? `Git branch ${updateInfo.branch || "main"} · local ${updateInfo.local_commit || "-"} · remote ${updateInfo.remote_commit || "-"}`
-            : `Current v${updateInfo?.current_version || "-"} · latest v${updateInfo?.latest_version || "-"} `}
+          {updateInfo?.channel === "git" || updateInfo?.channel === "github_commit"
+            ? `Commit channel ${updateInfo.branch || "main"} · local ${updateInfo.local_commit || "-"} · remote ${updateInfo.remote_commit || "-"}`
+            : `Release channel · current v${updateInfo?.current_version || "-"} · latest v${updateInfo?.latest_version || "-"} `}
         </div>
         <div className="flex flex-wrap gap-2">
           <button className="btn" onClick={() => checkUpdates(true, true).catch((e) => addToast(e.message, "err"))} type="button">

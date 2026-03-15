@@ -1573,19 +1573,28 @@ class AppState:
         if cached and not force:
             checked_at = cached.get("checked_at")
             if checked_at:
-                age_seconds = time.time() - datetime.fromisoformat(checked_at).timestamp()
-                if age_seconds < 3600:
-                    return cached
+                try:
+                    age_seconds = time.time() - datetime.fromisoformat(checked_at).timestamp()
+                    if age_seconds < 3600:
+                        return cached
+                except ValueError:
+                    pass
 
-        url = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
-        request = urllib.request.Request(
-            url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "rsyncwebapp-update-checker",
-            },
-            method="GET",
-        )
+        def _github_json(url: str, timeout: int = 6) -> dict[str, Any]:
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "rsyncwebapp-update-checker",
+                },
+                method="GET",
+            )
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise RuntimeError("Unexpected GitHub payload shape")
+            return payload
+
         result: dict[str, Any] = {
             "current_version": APP_VERSION,
             "update_repo": UPDATE_REPO,
@@ -1593,36 +1602,110 @@ class AppState:
             "ok": False,
             "update_available": False,
         }
+
+        git_branch_candidates: list[str] = []
+        git_lookup_errors: list[str] = []
+        local_sha = ""
         if (ROOT / ".git").exists():
+            local_code, local_out = _run_capture(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
+            if local_code == 0 and local_out.strip():
+                local_sha = local_out.strip()
+
+            upstream_code, upstream_out = _run_capture(
+                ["git", "-C", str(ROOT), "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+            )
+            if upstream_code == 0 and upstream_out.strip() and "/" in upstream_out.strip():
+                upstream_branch = upstream_out.strip().split("/", 1)[1].strip()
+                if upstream_branch:
+                    git_branch_candidates.append(upstream_branch)
+
             branch_code, branch_out = _run_capture(
                 ["git", "-C", str(ROOT), "branch", "--show-current"]
             )
-            local_code, local_out = _run_capture(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
-            branch = branch_out.strip() if branch_code == 0 and branch_out.strip() else "main"
-            if local_code == 0 and local_out.strip():
+            current_branch = branch_out.strip() if branch_code == 0 else ""
+            if current_branch and current_branch not in git_branch_candidates:
+                git_branch_candidates.append(current_branch)
+
+            symref_code, symref_out = _run_capture(
+                ["git", "-C", str(ROOT), "ls-remote", "--symref", "origin", "HEAD"]
+            )
+            if symref_code == 0 and symref_out:
+                match = re.search(r"ref:\s+refs/heads/([^\s]+)\s+HEAD", symref_out)
+                if match:
+                    default_branch = match.group(1).strip()
+                    if default_branch and default_branch not in git_branch_candidates:
+                        git_branch_candidates.append(default_branch)
+            elif symref_out.strip():
+                git_lookup_errors.append(symref_out.strip())
+
+            remote_sha = ""
+            branch = ""
+            for candidate in git_branch_candidates:
                 remote_code, remote_out = _run_capture(
-                    ["git", "-C", str(ROOT), "ls-remote", "origin", f"refs/heads/{branch}"]
+                    ["git", "-C", str(ROOT), "ls-remote", "origin", f"refs/heads/{candidate}"]
                 )
-                remote_sha = remote_out.split()[0] if remote_code == 0 and remote_out.strip() else ""
-                if remote_sha:
-                    local_sha = local_out.strip()
-                    result.update(
-                        {
-                            "ok": True,
-                            "channel": "git",
-                            "branch": branch,
-                            "local_commit": local_sha[:10],
-                            "remote_commit": remote_sha[:10],
-                            "update_available": local_sha != remote_sha,
-                        }
+                if remote_code == 0 and remote_out.strip():
+                    remote_sha = remote_out.split()[0]
+                    branch = candidate
+                    break
+                detail = remote_out.strip() or f"No remote SHA for origin/{candidate}"
+                git_lookup_errors.append(detail)
+
+            if local_sha and remote_sha:
+                result.update(
+                    {
+                        "ok": True,
+                        "channel": "git",
+                        "branch": branch or "main",
+                        "local_commit": local_sha[:10],
+                        "remote_commit": remote_sha[:10],
+                        "update_available": local_sha != remote_sha,
+                    }
+                )
+                with self._lock:
+                    self._update_check_cache = result
+                return result
+
+            github_branch = ""
+            github_sha = ""
+            if local_sha and UPDATE_REPO:
+                try:
+                    repo_payload = _github_json(f"https://api.github.com/repos/{UPDATE_REPO}")
+                    github_branch = str(repo_payload.get("default_branch", "")).strip() or "main"
+                    commit_payload = _github_json(
+                        f"https://api.github.com/repos/{UPDATE_REPO}/commits/{github_branch}"
                     )
-                    with self._lock:
-                        self._update_check_cache = result
-                    return result
+                    github_sha = str(commit_payload.get("sha", "")).strip()
+                except (
+                    urllib.error.URLError,
+                    TimeoutError,
+                    json.JSONDecodeError,
+                    RuntimeError,
+                ) as exc:
+                    git_lookup_errors.append(str(exc))
+
+            if local_sha and github_sha:
+                result.update(
+                    {
+                        "ok": True,
+                        "channel": "github_commit",
+                        "branch": github_branch or "main",
+                        "local_commit": local_sha[:10],
+                        "remote_commit": github_sha[:10],
+                        "update_available": local_sha != github_sha,
+                    }
+                )
+                if git_lookup_errors:
+                    result["git_lookup_error"] = git_lookup_errors[-1][:240]
+                with self._lock:
+                    self._update_check_cache = result
+                return result
+
+            if git_lookup_errors:
+                result["git_lookup_error"] = git_lookup_errors[-1][:240]
 
         try:
-            with urllib.request.urlopen(request, timeout=5) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+            payload = _github_json(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest")
             latest_tag = str(payload.get("tag_name", "")).strip()
             latest_version = latest_tag.lstrip("vV") if latest_tag else ""
             html_url = str(payload.get("html_url", "")).strip()
@@ -1639,7 +1722,12 @@ class AppState:
                     "update_available": update_available,
                 }
             )
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            json.JSONDecodeError,
+            RuntimeError,
+        ) as exc:
             result["error"] = str(exc)
 
         with self._lock:
