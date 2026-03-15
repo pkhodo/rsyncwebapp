@@ -13,6 +13,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -24,6 +25,11 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
 
 ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_SRC_DIR = ROOT / "app" / "frontend"
@@ -38,6 +44,52 @@ SETTINGS_PATH = STATE_DIR / "service-settings.json"
 BIN_DIR = ROOT / "bin"
 PACKAGE_JSON_PATH = ROOT / "package.json"
 ENV_UPDATE_REPO = os.environ.get("RSYNC_WEBAPP_UPDATE_REPO", "").strip()
+INSTANCE_LOCK_DIR = Path(tempfile.gettempdir())
+
+
+class SingleInstanceLock:
+    def __init__(self, lock_path: Path, key: str):
+        self.lock_path = lock_path
+        self.key = key
+        self._file: Any | None = None
+
+    def acquire(self) -> bool:
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.lock_path.open("a+", encoding="utf-8")
+        if fcntl is None:
+            self._file = handle
+            return True
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            return False
+        handle.seek(0)
+        handle.truncate()
+        payload = {
+            "pid": os.getpid(),
+            "started_at": now_iso(),
+            "root": str(ROOT),
+            "key": self.key,
+        }
+        handle.write(json.dumps(payload) + "\n")
+        handle.flush()
+        self._file = handle
+        return True
+
+    def release(self) -> None:
+        if self._file is None:
+            return
+        if fcntl is not None:
+            try:
+                fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        try:
+            self._file.close()
+        except Exception:
+            pass
+        self._file = None
 
 
 def now_iso() -> str:
@@ -884,10 +936,12 @@ class JobControl:
 
 
 class AppState:
-    def __init__(self) -> None:
+    def __init__(self, host: str, port: int) -> None:
         self._lock = threading.Lock()
         self._locations_lock = threading.Lock()
         self.started_at = now_iso()
+        self.host = host
+        self.port = port
         self.history = HistoryStore(DB_PATH)
         self.jobs: dict[str, JobControl] = {}
         self._locations: dict[str, list[dict[str, str]]] = {
@@ -904,6 +958,63 @@ class AppState:
         self._load_settings()
         self._load_jobs()
         self._load_locations()
+
+    def _list_listener_pids(self) -> list[int]:
+        if not shutil.which("lsof"):
+            return [os.getpid()]
+        proc = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{self.port}", "-sTCP:LISTEN", "-t"],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode not in {0, 1}:
+            return [os.getpid()]
+        pids: set[int] = set()
+        for raw in proc.stdout.splitlines():
+            value = raw.strip()
+            if not value:
+                continue
+            try:
+                pids.add(int(value))
+            except ValueError:
+                continue
+        if not pids:
+            pids.add(os.getpid())
+        return sorted(pids)
+
+    def _process_detail(self, pid: int) -> dict[str, Any]:
+        detail = {
+            "pid": pid,
+            "current": pid == os.getpid(),
+            "command": "",
+        }
+        proc = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0:
+            detail["command"] = (proc.stdout.strip() or "")[:220]
+        return detail
+
+    def _instance_summary(self) -> dict[str, Any]:
+        pids = self._list_listener_pids()
+        details = [self._process_detail(pid) for pid in pids]
+        count = len(pids)
+        return {
+            "count": count,
+            "pids": pids,
+            "details": details,
+            "single_instance": count == 1 and os.getpid() in pids,
+            "warning": (
+                "Multiple listeners found on app port. Stop duplicates and keep one service."
+                if count > 1
+                else ""
+            ),
+            "cleanup_hint": (
+                "Use Setup > service controls or ./bin/stop-ui.sh, then ./bin/status-ui.sh to verify one instance."
+            ),
+        }
 
     def _load_settings(self) -> None:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1482,9 +1593,12 @@ class AppState:
         uptime = int((datetime.now(tz=timezone.utc) - started_dt).total_seconds())
         return {
             "pid": os.getpid(),
+            "host": self.host,
+            "port": self.port,
             "started_at": self.started_at,
             "uptime_seconds": uptime,
             "service_pause": self.is_service_paused(),
+            "instances": self._instance_summary(),
         }
 
     def system_checks(self) -> dict[str, Any]:
@@ -2131,7 +2245,15 @@ class RequestHandler(SimpleHTTPRequestHandler):
 def main() -> None:
     host = os.environ.get("RSYNC_WEBAPP_HOST", "127.0.0.1")
     port = int(os.environ.get("RSYNC_WEBAPP_PORT", "8787"))
-    app_state = AppState()
+    lock_path = INSTANCE_LOCK_DIR / f"rsync-webapp-{port}.lock"
+    lock = SingleInstanceLock(lock_path, key=f"{host}:{port}")
+    if not lock.acquire():
+        print(
+            f"Rsync Web App is already running on {host}:{port}. "
+            "Use ./bin/status-ui.sh to inspect active instance."
+        )
+        return
+    app_state = AppState(host=host, port=port)
 
     def request_restart() -> None:
         def _restart() -> None:
@@ -2172,6 +2294,7 @@ def main() -> None:
         pass
     finally:
         httpd.server_close()
+        lock.release()
 
 
 if __name__ == "__main__":

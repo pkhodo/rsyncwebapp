@@ -1,6 +1,7 @@
 # Rsync Web App
 
 Local-first web dashboard for one-way `rsync` jobs (`remote -> local`) with retries, logs, previews, setup helpers, and high-signal operations UI.
+Built for non-developers too: after initial install, everyday operation is UI-first and can be done without terminal commands.
 
 Docs site: <https://pkhodo.github.io/rsyncwebapp/>
 
@@ -50,6 +51,7 @@ cd rsyncwebapp
 - Pause/resume/cancel/start controls
 - Auto-retry when network/SSH is unavailable
 - Global service pause (`Pause Auto-Sync`) for ZTNA downtime periods
+- Single-instance guard per port (prevents duplicate listeners)
 - Service health + service logs in UI
 - System readiness + rsync capability checks
 - Setup Center with one-click installers per detected OS
@@ -89,6 +91,7 @@ After opening the UI once, use **First-Run Wizard** and **Setup Center**:
 - Windows: dependencies, desktop shortcuts, and one-click quickstart
 
 Use **Copy Diagnostics** in the top action bar if you need to share service state/log context.
+If you suspect duplicate starts, run `./bin/status-ui.sh` (inspect listeners) and `./bin/stop-ui.sh` (clean stop).
 
 Use **Locations** when you manage many servers/paths:
 - save remote and local profiles once

@@ -36,7 +36,10 @@ cat > "${AGENT_FILE}" <<EOF
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+      <key>SuccessfulExit</key>
+      <false/>
+    </dict>
     <key>StandardOutPath</key>
     <string>${ROOT_DIR}/state/logs/launchagent.out.log</string>
     <key>StandardErrorPath</key>

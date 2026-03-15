@@ -891,6 +891,10 @@ export default function App() {
             <div className="kpi-label">With Alerts</div>
             <div className="kpi-value">{derived.counters.withAlert}</div>
           </article>
+          <article className="kpi">
+            <div className="kpi-label">Instances</div>
+            <div className="kpi-value">{service?.instances?.count ?? "-"}</div>
+          </article>
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
@@ -899,6 +903,22 @@ export default function App() {
               {server.server} · {server.reachable ? "up" : "down"} · {server.latency_ms ?? "-"}ms
             </span>
           ))}
+        </div>
+        <div className="mt-4 space-y-2 text-sm">
+          <div className={statusClass(service?.instances?.single_instance ? "ok" : "warn")}>
+            <Server className="h-3.5 w-3.5" />
+            listeners on :{service?.port ?? 8787} · {service?.instances?.count ?? "-"}
+          </div>
+          {service?.instances?.warning ? (
+            <div className={statusClass("warn")}>
+              <Zap className="h-3.5 w-3.5" />
+              {service.instances.warning}
+            </div>
+          ) : null}
+          <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] p-2 text-xs opacity-80">
+            {service?.instances?.cleanup_hint ||
+              "Keep one app instance per port. Use Setup controls or ./bin/status-ui.sh to verify."}
+          </div>
         </div>
       </Collapsible>
 
@@ -1683,6 +1703,9 @@ export default function App() {
             <span className={statusClass(service ? "ok" : "warn")}>
               Service: {service ? `PID ${service.pid}` : "loading"}
             </span>
+            <span className={statusClass(service?.instances?.single_instance ? "ok" : "warn")}>
+              Instances: {service?.instances?.count ?? "-"} on :{service?.port ?? 8787}
+            </span>
             <span className={statusClass(service?.service_pause ? "warn" : "ok")}>
               Auto-sync: {service?.service_pause ? "paused" : "active"}
             </span>
@@ -1770,6 +1793,9 @@ export default function App() {
               <div className="flex flex-wrap gap-2 text-xs">
                 <span className={statusClass(service ? "ok" : "warn")}>
                   <Cpu className="h-3.5 w-3.5" /> service {service ? `${service.uptime_seconds}s uptime` : "loading"}
+                </span>
+                <span className={statusClass(service?.instances?.single_instance ? "ok" : "warn")}>
+                  <Server className="h-3.5 w-3.5" /> instances {service?.instances?.count ?? "-"} on :{service?.port ?? 8787}
                 </span>
                 <span className={statusClass(service?.service_pause ? "warn" : "ok")}>
                   <HardDrive className="h-3.5 w-3.5" /> {service?.service_pause ? "auto-sync paused" : "auto-sync running"}

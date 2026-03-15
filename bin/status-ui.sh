@@ -12,8 +12,11 @@ if [ -f "${AGENT_FILE}" ] && grep -Fq "${ROOT_DIR}" "${AGENT_FILE}"; then
 fi
 
 if lsof -ti "tcp:${PORT}" >/dev/null 2>&1; then
-  PID="$(lsof -ti "tcp:${PORT}" | head -1)"
+  PIDS="$(lsof -ti "tcp:${PORT}" | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  COUNT="$(echo "${PIDS}" | wc -w | tr -d ' ')"
+  PID="$(echo "${PIDS}" | awk '{print $1}')"
   echo "Rsync Web App: running (PID ${PID})"
+  echo "Port listeners (${PORT}): ${COUNT} -> ${PIDS}"
   if [ -f "${AGENT_FILE}" ]; then
     if [ "${AGENT_MATCHES_REPO}" = "1" ]; then
       echo "LaunchAgent: installed (${AGENT_LABEL})"
@@ -22,6 +25,9 @@ if lsof -ti "tcp:${PORT}" >/dev/null 2>&1; then
     fi
   fi
   echo "URL: http://rsync.localhost:${PORT}"
+  if [ "${COUNT}" -gt 1 ]; then
+    echo "Warning: multiple listeners detected. Stop extras with ./bin/stop-ui.sh"
+  fi
   exit 0
 fi
 
