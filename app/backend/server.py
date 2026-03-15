@@ -310,7 +310,12 @@ class HistoryStore:
                   dry_run INTEGER NOT NULL,
                   mode TEXT NOT NULL,
                   bytes_line TEXT,
-                  error TEXT
+                  error TEXT,
+                  transferred_files INTEGER,
+                  deleted_files INTEGER,
+                  sent_bytes INTEGER,
+                  received_bytes INTEGER,
+                  total_size_bytes INTEGER
                 )
                 """
             )
@@ -326,7 +331,19 @@ class HistoryStore:
                 )
                 """
             )
+            self._ensure_column("job_runs", "transferred_files", "INTEGER")
+            self._ensure_column("job_runs", "deleted_files", "INTEGER")
+            self._ensure_column("job_runs", "sent_bytes", "INTEGER")
+            self._ensure_column("job_runs", "received_bytes", "INTEGER")
+            self._ensure_column("job_runs", "total_size_bytes", "INTEGER")
             self._conn.commit()
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        existing = {str(row["name"]) for row in rows}
+        if column in existing:
+            return
+        self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def add_event(self, job_id: str, event_type: str, status: str, message: str) -> None:
         with self._lock:
@@ -362,17 +379,55 @@ class HistoryStore:
         exit_code: int | None,
         bytes_line: str,
         error: str,
+        summary: dict[str, int] | None = None,
     ) -> None:
+        summary = summary or {}
         with self._lock:
             self._conn.execute(
                 """
                 UPDATE job_runs
-                SET finished_at = ?, status = ?, exit_code = ?, bytes_line = ?, error = ?
+                SET finished_at = ?, status = ?, exit_code = ?, bytes_line = ?, error = ?,
+                    transferred_files = ?, deleted_files = ?, sent_bytes = ?, received_bytes = ?, total_size_bytes = ?
                 WHERE id = ?
                 """,
-                (now_iso(), status, exit_code, bytes_line, error, run_id),
+                (
+                    now_iso(),
+                    status,
+                    exit_code,
+                    bytes_line,
+                    error,
+                    int(summary.get("transferred_files", 0) or 0),
+                    int(summary.get("deleted_files", 0) or 0),
+                    int(summary.get("sent_bytes", 0) or 0),
+                    int(summary.get("received_bytes", 0) or 0),
+                    int(summary.get("total_size_bytes", 0) or 0),
+                    run_id,
+                ),
             )
             self._conn.commit()
+
+    def get_latest_runs(self, job_ids: list[str]) -> dict[str, dict[str, Any]]:
+        cleaned = [job_id for job_id in job_ids if str(job_id).strip()]
+        if not cleaned:
+            return {}
+        placeholders = ",".join("?" for _ in cleaned)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT jr.*
+                FROM job_runs jr
+                INNER JOIN (
+                  SELECT job_id, MAX(id) AS max_id
+                  FROM job_runs
+                  WHERE job_id IN ({placeholders})
+                  GROUP BY job_id
+                ) latest
+                  ON latest.job_id = jr.job_id
+                 AND latest.max_id = jr.id
+                """,
+                tuple(cleaned),
+            ).fetchall()
+        return {str(row["job_id"]): dict(row) for row in rows}
 
     def get_recent(self, job_id: str, limit: int = 20) -> dict[str, Any]:
         with self._lock:
@@ -436,6 +491,9 @@ class JobRuntime:
     pid: int | None = None
     last_exit_code: int | None = None
     last_error: str = ""
+    last_run_type: str = ""  # live|dry-run
+    last_run_summary: str = ""
+    last_run_stats: dict[str, int] = field(default_factory=dict)
 
 
 class JobControl:
@@ -509,7 +567,68 @@ class JobControl:
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(timestamped + "\n")
 
-    def _build_command(self, force_dry_run: bool = False) -> list[str]:
+    def _extract_int(self, value: str) -> int:
+        digits = re.sub(r"[^\d]", "", value or "")
+        return int(digits) if digits else 0
+
+    def _summarize_run(self, lines: list[str]) -> dict[str, int]:
+        transferred = 0
+        deleted = 0
+        sent = 0
+        received = 0
+        total_size = 0
+
+        xfer_re = re.compile(r"xfer#(?P<count>\d+)")
+        transferred_re = re.compile(r"number of .*files transferred:\s*(?P<count>[\d,]+)", re.IGNORECASE)
+        sent_re = re.compile(
+            r"sent\s+(?P<sent>[\d,]+)\s+bytes\s+received\s+(?P<recv>[\d,]+)\s+bytes",
+            re.IGNORECASE,
+        )
+        total_re = re.compile(r"total size is\s+(?P<size>[\d,]+)", re.IGNORECASE)
+
+        for line in lines:
+            lowered = line.lower()
+            if "deleting " in lowered:
+                deleted += 1
+
+            xfer_match = xfer_re.search(line)
+            if xfer_match:
+                transferred = max(transferred, self._extract_int(xfer_match.group("count")))
+
+            transferred_match = transferred_re.search(line)
+            if transferred_match:
+                transferred = max(
+                    transferred,
+                    self._extract_int(transferred_match.group("count")),
+                )
+
+            sent_match = sent_re.search(line)
+            if sent_match:
+                sent = self._extract_int(sent_match.group("sent"))
+                received = self._extract_int(sent_match.group("recv"))
+
+            total_match = total_re.search(line)
+            if total_match:
+                total_size = self._extract_int(total_match.group("size"))
+
+        return {
+            "transferred_files": transferred,
+            "deleted_files": deleted,
+            "sent_bytes": sent,
+            "received_bytes": received,
+            "total_size_bytes": total_size,
+        }
+
+    def _summary_text(self, summary: dict[str, int], dry_run: bool) -> str:
+        transfer_label = "would transfer" if dry_run else "transferred"
+        delete_label = "would delete" if dry_run else "deleted"
+        return (
+            f"{transfer_label}: {summary.get('transferred_files', 0)} · "
+            f"{delete_label}: {summary.get('deleted_files', 0)} · "
+            f"sent: {summary.get('sent_bytes', 0)}B · recv: {summary.get('received_bytes', 0)}B"
+        )
+
+    def _build_command(self, force_dry_run: bool = False, force_live: bool = False) -> list[str]:
         cfg = self.config
         caps = self._rsync_caps_provider()
         if not caps.get("available"):
@@ -546,7 +665,7 @@ class JobControl:
             cmd.append("--delete")
         if cfg.mode == "append":
             cmd.append("--ignore-existing")
-        if cfg.dry_run or force_dry_run:
+        if (cfg.dry_run and not force_live) or force_dry_run:
             cmd.append("--dry-run")
         if cfg.bwlimit_kbps > 0:
             cmd.append(f"--bwlimit={cfg.bwlimit_kbps}")
@@ -622,7 +741,9 @@ class JobControl:
             "tail": "\n".join(output[-60:]),
         }
 
-    def start(self, force_dry_run: bool = False) -> None:
+    def start(self, force_dry_run: bool = False, force_live: bool = False) -> None:
+        if force_dry_run and force_live:
+            raise RuntimeError("Cannot request both dry-run and live mode at the same time.")
         with self._lock:
             if self.runtime.status in {"running", "paused", "paused_service", "waiting_network", "waiting_window"}:
                 raise RuntimeError("Job already running")
@@ -638,13 +759,17 @@ class JobControl:
                 )
             self._cancel_requested.clear()
             self._thread = threading.Thread(
-                target=self._runner, kwargs={"force_dry_run": force_dry_run}, daemon=True
+                target=self._runner,
+                kwargs={"force_dry_run": force_dry_run, "force_live": force_live},
+                daemon=True,
             )
             self._thread.start()
         self._record_event(
             "action",
             "requested",
-            "Dry run requested by user." if force_dry_run else "Run requested by user.",
+            "Dry run requested by user."
+            if force_dry_run
+            else ("Live run requested by user." if force_live else "Run requested by user."),
         )
 
     def test_connection(self) -> dict[str, Any]:
@@ -696,7 +821,7 @@ class JobControl:
         self._write_log("Cancel requested by user.")
         self._record_event("action", "canceled", "Cancel requested by user.")
 
-    def _runner(self, force_dry_run: bool = False) -> None:
+    def _runner(self, force_dry_run: bool = False, force_live: bool = False) -> None:
         cfg = self.config
         delay = max(1, cfg.retry_initial_seconds)
         waiting_window_logged = False
@@ -767,21 +892,23 @@ class JobControl:
                 attempt = self.runtime.attempts
 
             run_id = None
+            run_is_dry = force_dry_run or (cfg.dry_run and not force_live)
             if self.history:
                 run_id = self.history.start_run(
                     self.config.id,
                     attempt=attempt,
                     mode=cfg.mode,
-                    dry_run=(cfg.dry_run or force_dry_run),
+                    dry_run=run_is_dry,
                 )
 
             try:
                 self._ensure_local_path()
-                cmd = self._build_command(force_dry_run=force_dry_run)
+                cmd = self._build_command(force_dry_run=force_dry_run, force_live=force_live)
                 if cfg.nice_level != 0:
                     cmd = ["nice", "-n", str(cfg.nice_level)] + cmd
                 self._write_log(f"Starting: {' '.join(shlex.quote(c) for c in cmd)}")
                 run_lines: list[str] = []
+                run_lines_full: list[str] = []
                 proc = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -799,8 +926,11 @@ class JobControl:
                     line = raw_line.rstrip("\n")
                     self._write_log(line)
                     run_lines.append(line.lower())
+                    run_lines_full.append(line)
                     if len(run_lines) > 300:
                         run_lines = run_lines[-300:]
+                    if len(run_lines_full) > 2000:
+                        run_lines_full = run_lines_full[-2000:]
                     match = self.PROGRESS_RE.search(line)
                     if not match:
                         match = self.PROGRESS_FALLBACK_RE.search(line)
@@ -821,6 +951,10 @@ class JobControl:
                 self.runtime.pid = None
                 self.runtime.last_exit_code = exit_code
                 self.runtime.last_finished_at = now_iso()
+                summary = self._summarize_run(run_lines_full if "run_lines_full" in locals() else [])
+                self.runtime.last_run_type = "dry-run" if run_is_dry else "live"
+                self.runtime.last_run_stats = summary
+                self.runtime.last_run_summary = self._summary_text(summary, run_is_dry)
 
             if self._cancel_requested.is_set():
                 with self._lock:
@@ -834,6 +968,7 @@ class JobControl:
                         exit_code=self.runtime.last_exit_code,
                         bytes_line=self.runtime.progress_line,
                         error=self.runtime.last_error,
+                        summary=summary,
                     )
                 self._record_event("run", "canceled", "Job canceled by user.")
                 return
@@ -851,8 +986,13 @@ class JobControl:
                         exit_code=0,
                         bytes_line=self.runtime.progress_line,
                         error="",
+                        summary=summary,
                     )
-                self._record_event("run", "completed", "Run completed successfully.")
+                self._record_event(
+                    "run",
+                    "completed",
+                    f"Run completed successfully. {self.runtime.last_run_summary}",
+                )
                 return
 
             # Failure path.
@@ -879,6 +1019,7 @@ class JobControl:
                         exit_code=exit_code,
                         bytes_line=self.runtime.progress_line,
                         error=self.runtime.last_error,
+                        summary=summary,
                     )
                 self._record_event("run", "failed", self.runtime.last_error)
                 return
@@ -894,6 +1035,7 @@ class JobControl:
                     exit_code=exit_code,
                     bytes_line=self.runtime.progress_line,
                     error=self.runtime.last_error,
+                    summary=summary,
                 )
             self._write_log(
                 f"Network unavailable. Retrying in {delay}s (ZTNA/SSH check)."
@@ -1099,7 +1241,11 @@ class AppState:
 
     def list_jobs(self) -> list[dict[str, Any]]:
         with self._lock:
-            return [job.serialize() for job in self.jobs.values()]
+            items = [job.serialize() for job in self.jobs.values()]
+        latest_runs = self.history.get_latest_runs([item["config"]["id"] for item in items])
+        for item in items:
+            item["last_run"] = latest_runs.get(item["config"]["id"])
+        return items
 
     def list_locations(self) -> dict[str, Any]:
         with self._locations_lock:
@@ -2122,6 +2268,11 @@ class RequestHandler(SimpleHTTPRequestHandler):
             if path.startswith("/api/jobs/") and path.endswith("/start"):
                 job_id = path.split("/")[3]
                 self.app_state.get(job_id).start()
+                self._send_json({"ok": True})
+                return
+            if path.startswith("/api/jobs/") and path.endswith("/start-live"):
+                job_id = path.split("/")[3]
+                self.app_state.get(job_id).start(force_live=True)
                 self._send_json({"ok": True})
                 return
             if path.startswith("/api/jobs/") and path.endswith("/dry-run"):

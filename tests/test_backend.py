@@ -126,6 +126,14 @@ class CommandBuildTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             job.start(force_dry_run=False)
 
+    def test_force_live_ignores_default_dry_run(self):
+        payload = _base_payload()
+        payload["dry_run"] = True
+        cfg = server.JobConfig(**server.normalize_job_payload(payload))
+        job = server.JobControl(cfg, rsync_caps_provider=lambda: _caps())
+        cmd = job._build_command(force_live=True)
+        self.assertNotIn("--dry-run", cmd)
+
 
 class RetryClassificationTests(unittest.TestCase):
     def test_retryable_by_exit_code(self):

@@ -101,6 +101,29 @@ function shortPath(value, max = 54) {
   return `...${value.slice(-(max - 3))}`;
 }
 
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = bytes;
+  let unit = units[0];
+  for (const next of units) {
+    unit = next;
+    if (size < 1024 || next === units[units.length - 1]) break;
+    size /= 1024;
+  }
+  return `${size >= 100 ? size.toFixed(0) : size.toFixed(1)} ${unit}`;
+}
+
+function formatRunDuration(startedAt, finishedAt) {
+  if (!startedAt || !finishedAt) return "-";
+  const start = new Date(startedAt).getTime();
+  const end = new Date(finishedAt).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "-";
+  const seconds = Math.round((end - start) / 1000);
+  return `${seconds}s`;
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -357,8 +380,12 @@ export default function App() {
       lines.push("- none");
     } else {
       for (const run of runs) {
+        const t = Number(run.transferred_files || 0);
+        const d = Number(run.deleted_files || 0);
+        const sent = formatBytes(run.sent_bytes || 0);
+        const recv = formatBytes(run.received_bytes || 0);
         lines.push(
-          `- #${run.id} ${run.status} attempt=${run.attempt} start=${formatDate(run.started_at)} end=${formatDate(run.finished_at)} exit=${run.exit_code ?? "-"}`
+          `- #${run.id} ${run.status} attempt=${run.attempt} start=${formatDate(run.started_at)} end=${formatDate(run.finished_at)} exit=${run.exit_code ?? "-"} mode=${Number(run.dry_run || 0) === 1 ? "dry-run" : "live"} transferred=${t} deleted=${d} sent=${sent} recv=${recv}`
         );
       }
     }
@@ -588,7 +615,15 @@ export default function App() {
         return;
       }
       await api(`/api/jobs/${jobId}/${action}`, { method: "POST" });
-      addToast(`${action} requested for ${jobId}`, "ok");
+      const actionLabel = {
+        "start-live": "Live run requested",
+        "start": "Run requested",
+        "dry-run": "Dry-run requested",
+        "pause": "Pause requested",
+        "resume": "Resume requested",
+        "cancel": "Cancel requested",
+      }[action] || `${action} requested`;
+      addToast(`${actionLabel} for ${jobId}`, "ok");
       await loadJobs();
     } catch (error) {
       addToast(error.message, "err", 6000);
@@ -966,7 +1001,17 @@ export default function App() {
         {jobs.map((job) => {
           const cfg = job.config;
           const rt = job.runtime;
+          const lastRun = job.last_run || null;
           const progress = Math.max(0, Math.min(100, Number(rt.progress_percent || 0)));
+          const runDry = Number(lastRun?.dry_run || 0) === 1 || rt.last_run_type === "dry-run";
+          const transferred = Number(lastRun?.transferred_files ?? rt.last_run_stats?.transferred_files ?? 0);
+          const deleted = Number(lastRun?.deleted_files ?? rt.last_run_stats?.deleted_files ?? 0);
+          const sent = Number(lastRun?.sent_bytes ?? rt.last_run_stats?.sent_bytes ?? 0);
+          const received = Number(lastRun?.received_bytes ?? rt.last_run_stats?.received_bytes ?? 0);
+          const lastExitCode = lastRun?.exit_code ?? rt.last_exit_code;
+          const lastDuration = formatRunDuration(lastRun?.started_at, lastRun?.finished_at);
+          const statusTone =
+            rt.status === "failed" ? "err" : rt.status === "running" ? "ok" : rt.status === "completed" ? "ok" : "warn";
           return (
             <article className="job-card" key={cfg.id}>
               <div className="flex items-start justify-between gap-3">
@@ -976,32 +1021,58 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={statusClass(rt.last_error ? "warn" : "ok")}>{progress.toFixed(1)}%</span>
-                  <span className={statusClass(rt.status === "failed" ? "err" : rt.status === "running" ? "ok" : "warn")}>
+                  <span className={statusClass(statusTone)}>
                     {String(rt.status || "idle").replaceAll("_", " ")}
                   </span>
                 </div>
               </div>
 
-              <div className="mt-2 grid gap-2 text-xs md:grid-cols-2">
-                <div className="mono">src {cfg.server}:{shortPath(cfg.remote_path)}</div>
-                <div className="mono">dst {shortPath(cfg.local_path)}</div>
-                <div>
-                  mode <b>{cfg.mode}</b> · retries <b>{rt.retries}</b> · auto-retry <b>{cfg.auto_retry ? "on" : "off"}</b>
+              <div className="mt-2 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-xs">
+                <div className="mb-2 grid gap-2 md:grid-cols-[1fr_auto_1fr] md:items-center">
+                  <div>
+                    <div className="field-label">Remote source</div>
+                    <div className="mono">{cfg.server}:{shortPath(cfg.remote_path, 44)}</div>
+                  </div>
+                  <div className="text-center text-sm opacity-70">→ one-way →</div>
+                  <div>
+                    <div className="field-label">Local destination</div>
+                    <div className="mono">{shortPath(cfg.local_path, 44)}</div>
+                  </div>
                 </div>
-                <div>last error {rt.last_error ? <span className="text-[var(--bad)]">{rt.last_error}</span> : "none"}</div>
+                <div className="flex flex-wrap gap-2">
+                  <span className={statusClass("ok")}>
+                    {runDry ? "last mode dry-run" : "last mode live"}
+                  </span>
+                  <span className={statusClass(lastExitCode === 0 ? "ok" : "warn")}>
+                    exit {lastExitCode ?? "-"}
+                  </span>
+                  <span className={statusClass("neutral")}>duration {lastDuration}</span>
+                  <span className={statusClass("neutral")}>transferred {transferred}</span>
+                  <span className={statusClass("neutral")}>deleted {deleted}</span>
+                  <span className={statusClass("neutral")}>sent {formatBytes(sent)}</span>
+                  <span className={statusClass("neutral")}>recv {formatBytes(received)}</span>
+                  <span className={statusClass(cfg.mode === "mirror" ? "warn" : "ok")}>mode {cfg.mode}</span>
+                  {cfg.dry_run ? <span className={statusClass("warn")}>default dry-run enabled</span> : null}
+                </div>
+                <div className="mt-2">
+                  retries <b>{rt.retries}</b> · auto-retry <b>{cfg.auto_retry ? "on" : "off"}</b>
+                </div>
+                <div className="mt-1">
+                  last error {rt.last_error ? <span className="text-[var(--bad)]">{rt.last_error}</span> : "none"}
+                </div>
               </div>
 
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-black/20">
                 <div className="h-full bg-[var(--accent)] transition-all" style={{ width: `${progress}%` }} />
               </div>
-              <div className="mt-1 text-xs opacity-70">{rt.progress_line || "No progress output yet."}</div>
+              <div className="mt-1 text-xs opacity-70">{rt.last_run_summary || rt.progress_line || "No progress output yet."}</div>
 
               <div className="mt-3 flex flex-wrap gap-2">
-                <button className="btn" disabled={busyMap[`job-start-${cfg.id}`]} onClick={() => runJobAction("start", cfg.id)} type="button">
-                  <Play className="h-3.5 w-3.5" /> Start
+                <button className="btn" disabled={busyMap[`job-start-live-${cfg.id}`]} onClick={() => runJobAction("start-live", cfg.id)} type="button">
+                  <Play className="h-3.5 w-3.5" /> Run Live
                 </button>
-                <button className="btn" onClick={() => runJobAction("dry-run", cfg.id)} type="button">
-                  <TestTubeDiagonal className="h-3.5 w-3.5" /> Dry Run
+                <button className="btn btn-ghost" onClick={() => runJobAction("dry-run", cfg.id)} type="button">
+                  <TestTubeDiagonal className="h-3.5 w-3.5" /> Run Dry-Run
                 </button>
                 <button className="btn btn-ghost" onClick={() => runJobAction("pause", cfg.id)} type="button">
                   <CirclePause className="h-3.5 w-3.5" /> Pause
@@ -1013,7 +1084,7 @@ export default function App() {
                   <CircleSlash2 className="h-3.5 w-3.5" /> Cancel
                 </button>
                 <button className="btn btn-ghost" onClick={() => runJobAction("test-connection", cfg.id)} type="button">
-                  <Network className="h-3.5 w-3.5" /> Test
+                  <Network className="h-3.5 w-3.5" /> Test SSH
                 </button>
                 <button className="btn btn-ghost" onClick={() => runJobAction("preview-deletes", cfg.id)} type="button">
                   <Eye className="h-3.5 w-3.5" /> Preview Deletes
@@ -1039,7 +1110,7 @@ export default function App() {
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-2">
         <Collapsible
-          title="Remote Locations"
+          title="Remote Sources"
           icon={UploadCloud}
           open={sectionsOpen.locationsRemote}
           onToggle={() => toggleSection("locationsRemote")}
@@ -1112,7 +1183,7 @@ export default function App() {
         </Collapsible>
 
         <Collapsible
-          title="Local Locations"
+          title="Local Destinations"
           icon={Download}
           open={sectionsOpen.locationsLocal}
           onToggle={() => toggleSection("locationsLocal")}
@@ -1178,7 +1249,7 @@ export default function App() {
       </div>
 
       <Collapsible
-        title="Compose Jobs From Location Profiles"
+        title="Compose Jobs From Sources and Destinations"
         icon={ArrowUpDown}
         open={sectionsOpen.locationsCompose}
         onToggle={() => toggleSection("locationsCompose")}
@@ -1485,6 +1556,21 @@ export default function App() {
           ) : null}
         </div>
 
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-xs">
+          <div className="mb-1 font-semibold">Sync Flow</div>
+          <div className="grid gap-2 md:grid-cols-[1fr_auto_1fr] md:items-center">
+            <div>
+              <div className="field-label">Remote source</div>
+              <div className="mono">{jobForm.server || "user@host"}:{shortPath(jobForm.remote_path || "/remote/path", 44)}</div>
+            </div>
+            <div className="text-center text-sm opacity-70">→ one-way →</div>
+            <div>
+              <div className="field-label">Local destination</div>
+              <div className="mono">{shortPath(jobForm.local_path || "/absolute/local/path", 44)}</div>
+            </div>
+          </div>
+        </div>
+
         {showAdvanced ? (
           <label>
             <span className="field-label">Exclude patterns (one per line)</span>
@@ -1529,7 +1615,7 @@ export default function App() {
               onChange={(event) => setJobForm((prev) => ({ ...prev, dry_run: event.target.checked }))}
               type="checkbox"
             />
-            Dry run by default
+            Default run mode is dry-run
           </label>
           <label className="check">
             <input
@@ -1550,6 +1636,9 @@ export default function App() {
             </label>
           ) : null}
         </div>
+        <p className="text-xs opacity-75">
+          Job actions in Jobs are explicit: <b>Run Live</b> applies changes, <b>Run Dry-Run</b> simulates only.
+        </p>
 
         <div className="flex flex-wrap gap-2">
           <button className="btn" disabled={busyMap["save-job"]} type="submit">
