@@ -1822,105 +1822,145 @@ class AppState:
             "python": platform.python_version(),
         }
 
-    def setup_options(self) -> dict[str, Any]:
-        info = self.platform_info()
-        os_id = info["os_id"]
-        actions: list[dict[str, str]] = []
-        if os_id == "macos":
-            actions = [
-                {
-                    "id": "install_dependencies",
-                    "label": "Install Dependencies",
-                    "script": "install-deps.sh",
-                    "description": "Install/verify python3, ssh, and rsync.",
-                },
-                {
-                    "id": "update_app",
-                    "label": "Update App",
-                    "script": "update-app.sh",
-                    "description": "Pull latest release if git checkout, or open release downloads.",
-                },
-                {
-                    "id": "install_launchagent",
-                    "label": "Enable Autostart",
-                    "script": "install-launchagent.sh",
-                    "description": "Start at login and auto-restart on crash.",
-                },
-                {
-                    "id": "install_menubar",
-                    "label": "Install Menu Bar",
-                    "script": "install-menubar.sh",
-                    "description": "Native menu bar controller (rsync.wa).",
-                },
-                {
-                    "id": "install_desktop_shortcuts",
-                    "label": "Desktop Shortcuts",
-                    "script": "install-desktop-shortcuts.sh",
-                    "description": "Create Start/Stop/Status desktop commands.",
-                },
-            ]
-        elif os_id == "linux":
-            actions = [
-                {
-                    "id": "install_dependencies",
-                    "label": "Install Dependencies",
-                    "script": "install-deps.sh",
-                    "description": "Install/verify python3, ssh, and rsync.",
-                },
-                {
-                    "id": "update_app",
-                    "label": "Update App",
-                    "script": "update-app.sh",
-                    "description": "Pull latest release if git checkout, or open release downloads.",
-                },
-                {
-                    "id": "install_linux_autostart",
-                    "label": "Enable Autostart",
-                    "script": "install-linux-autostart.sh",
-                    "description": "Install user-level systemd service.",
-                },
-                {
-                    "id": "install_linux_shortcuts",
-                    "label": "Desktop Shortcuts",
-                    "script": "install-linux-desktop-shortcuts.sh",
-                    "description": "Create desktop launcher entries.",
-                },
-            ]
-        elif os_id == "windows":
-            actions = [
-                {
-                    "id": "install_dependencies",
-                    "label": "Install Dependencies",
-                    "script": "install-windows-deps.ps1",
-                    "description": "Guide/install required dependencies for Windows.",
-                },
-                {
-                    "id": "update_app",
-                    "label": "Update App",
-                    "script": "update-app.ps1",
-                    "description": "Pull latest release if git checkout, or open release downloads.",
-                },
-                {
-                    "id": "install_windows_shortcuts",
-                    "label": "Desktop Shortcuts",
-                    "script": "install-windows-shortcuts.ps1",
-                    "description": "Create PowerShell desktop shortcuts.",
-                },
-                {
-                    "id": "run_windows_quickstart",
-                    "label": "Start App (Windows)",
-                    "script": "windows-quickstart.ps1",
-                    "description": "One-click start flow for Windows.",
-                },
-            ]
-        return {"platform": info, "actions": actions, "checked_at": now_iso()}
+    def _local_write_paths_health(self) -> dict[str, Any]:
+        with self._lock:
+            paths = sorted({job.config.local_path for job in self.jobs.values()})
+        if not paths:
+            return {
+                "state": "pending",
+                "detail": "No jobs configured yet.",
+                "entries": [],
+            }
 
-    def run_setup_action(self, action_id: str) -> dict[str, Any]:
-        options = self.setup_options()
-        action = next((item for item in options["actions"] if item["id"] == action_id), None)
-        if not action:
-            raise RuntimeError(f"Unsupported setup action for this OS: {action_id}")
-        script_path = BIN_DIR / action["script"]
+        entries: list[dict[str, Any]] = []
+        has_error = False
+        has_warn = False
+        for raw_path in paths:
+            path = Path(raw_path)
+            exists = path.exists()
+            writable = bool(exists and os.access(path, os.W_OK | os.X_OK))
+            if writable:
+                state = "ok"
+                detail = "Writable"
+            elif exists:
+                state = "err"
+                detail = "Exists but not writable"
+                has_error = True
+            else:
+                state = "warn"
+                detail = "Path does not exist yet"
+                has_warn = True
+            entries.append(
+                {
+                    "path": str(path),
+                    "exists": exists,
+                    "writable": writable,
+                    "state": state,
+                    "detail": detail,
+                }
+            )
+
+        state = "err" if has_error else ("warn" if has_warn else "ok")
+        return {
+            "state": state,
+            "detail": f"{len(entries)} path(s) checked",
+            "entries": entries,
+        }
+
+    def setup_health(self, force: bool = False) -> dict[str, Any]:
+        checks = self.system_checks()
+        connectivity = self.get_connectivity(force=force)
+        instances = self._instance_summary()
+        local_write = self._local_write_paths_health()
+        updates = self.check_for_updates(force=force)
+
+        servers = list(connectivity.get("servers", {}).values())
+        if not servers:
+            ssh_state = "pending"
+            ssh_detail = "No SSH targets in jobs yet."
+        else:
+            reachable_count = sum(1 for item in servers if item.get("reachable"))
+            if reachable_count == len(servers):
+                ssh_state = "ok"
+            elif reachable_count > 0:
+                ssh_state = "warn"
+            else:
+                ssh_state = "err"
+            ssh_detail = f"{reachable_count}/{len(servers)} reachable"
+
+        update_state = "warn"
+        update_detail = "Update status unavailable"
+        if updates.get("ok"):
+            if updates.get("update_available"):
+                update_state = "warn"
+                update_detail = "New update available"
+            else:
+                update_state = "ok"
+                update_detail = "Up to date"
+        elif updates.get("error"):
+            update_detail = str(updates.get("error"))[:180]
+
+        items = [
+            {
+                "id": "dependencies",
+                "label": "Dependencies",
+                "state": "ok" if checks.get("ready") else "err",
+                "detail": "python3, ssh, rsync",
+            },
+            {
+                "id": "ssh_reachability",
+                "label": "SSH Reachability",
+                "state": ssh_state,
+                "detail": ssh_detail,
+            },
+            {
+                "id": "single_instance",
+                "label": "Single Instance",
+                "state": "ok" if instances.get("single_instance") else "err",
+                "detail": f"{instances.get('count', 0)} listener(s) on app port",
+            },
+            {
+                "id": "local_write_paths",
+                "label": "Local Write Paths",
+                "state": local_write.get("state", "warn"),
+                "detail": local_write.get("detail", ""),
+            },
+            {
+                "id": "updates",
+                "label": "Updates",
+                "state": update_state,
+                "detail": update_detail,
+            },
+        ]
+
+        err_count = sum(1 for item in items if item["state"] == "err")
+        warn_count = sum(1 for item in items if item["state"] in {"warn", "pending"})
+        overall = "err" if err_count else ("warn" if warn_count else "ok")
+
+        lines = ["Setup Check Report"]
+        for item in items:
+            lines.append(f"- {item['label']}: {item['state']} ({item['detail']})")
+        if instances.get("warning"):
+            lines.append(f"- Instance warning: {instances['warning']}")
+        lines.append(
+            f"Overall: {overall} · errors={err_count} · warnings={warn_count}"
+        )
+
+        return {
+            "overall": overall,
+            "errors": err_count,
+            "warnings": warn_count,
+            "items": items,
+            "instance": instances,
+            "local_paths": local_write,
+            "connectivity": connectivity,
+            "updates": updates,
+            "checked_at": now_iso(),
+            "report": "\n".join(lines),
+        }
+
+    def _script_action_result(self, action: dict[str, Any]) -> dict[str, Any]:
+        script_path = BIN_DIR / str(action["script"])
         if not script_path.exists():
             raise RuntimeError(f"Setup script is missing: {script_path.name}")
 
@@ -1943,14 +1983,288 @@ class AppState:
             text=True,
         )
         output = (proc.stdout + "\n" + proc.stderr).strip()
+        success = proc.returncode == 0
         return {
             "action": action,
-            "command": command,
-            "exit_code": proc.returncode,
-            "success": proc.returncode == 0,
-            "output": output[-5000:],
+            "success": success,
+            "level": "ok" if success else "err",
+            "summary": {
+                "title": f"{action['label']} {'completed' if success else 'failed'}",
+                "bullets": [
+                    f"Exit code: {proc.returncode}",
+                    f"Command: {' '.join(command)}",
+                ],
+            },
+            "details": {
+                "command": command,
+                "exit_code": proc.returncode,
+                "output": output[-5000:],
+            },
             "ran_at": now_iso(),
         }
+
+    def _repair_single_instance(self) -> dict[str, Any]:
+        pids = self._list_listener_pids()
+        extras = [pid for pid in pids if pid != os.getpid()]
+        stopped: list[int] = []
+        force_stopped: list[int] = []
+        for pid in extras:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                stopped.append(pid)
+            except ProcessLookupError:
+                continue
+            except Exception:
+                continue
+        if stopped:
+            time.sleep(0.6)
+        for pid in list(stopped):
+            still_running = subprocess.run(
+                ["ps", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+            ).returncode == 0
+            if still_running:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    force_stopped.append(pid)
+                except Exception:
+                    pass
+        current = self._instance_summary()
+        success = bool(current.get("single_instance"))
+        return {
+            "action": {"id": "repair_single_instance", "label": "Fix Duplicate Instances"},
+            "success": success,
+            "level": "ok" if success else "warn",
+            "summary": {
+                "title": "Duplicate instance repair completed",
+                "bullets": [
+                    f"Requested stop for: {stopped or ['none']}",
+                    f"Force-stopped: {force_stopped or ['none']}",
+                    f"Current listeners: {current.get('count', 0)}",
+                ],
+            },
+            "details": {"instances": current},
+            "ran_at": now_iso(),
+        }
+
+    def _recheck_ssh_aliases(self) -> dict[str, Any]:
+        connectivity = self.get_connectivity(force=True)
+        servers = list(connectivity.get("servers", {}).values())
+        reachable = sum(1 for item in servers if item.get("reachable"))
+        total = len(servers)
+        success = total > 0 and reachable == total
+        if total == 0:
+            level = "warn"
+        else:
+            level = "ok" if success else "warn"
+        bullets = [f"Reachable: {reachable}/{total}"]
+        for item in servers[:8]:
+            bullets.append(
+                f"{item.get('server')} -> {'ok' if item.get('reachable') else 'down'} ({item.get('latency_ms', '-') }ms)"
+            )
+        return {
+            "action": {"id": "recheck_ssh_aliases", "label": "Recheck SSH Aliases"},
+            "success": success,
+            "level": level,
+            "summary": {
+                "title": "SSH alias check completed",
+                "bullets": bullets,
+            },
+            "details": {"connectivity": connectivity},
+            "ran_at": now_iso(),
+        }
+
+    def setup_options(self) -> dict[str, Any]:
+        info = self.platform_info()
+        os_id = info["os_id"]
+        actions: list[dict[str, Any]] = []
+        if os_id == "macos":
+            actions = [
+                {
+                    "id": "install_dependencies",
+                    "label": "Install Dependencies",
+                    "script": "install-deps.sh",
+                    "description": "Install/verify python3, ssh, and rsync.",
+                    "category": "first_time",
+                    "kind": "script",
+                },
+                {
+                    "id": "install_launchagent",
+                    "label": "Enable Autostart",
+                    "script": "install-launchagent.sh",
+                    "description": "Start at login and auto-restart on crash.",
+                    "category": "first_time",
+                    "kind": "script",
+                },
+                {
+                    "id": "install_menubar",
+                    "label": "Install Menu Bar",
+                    "script": "install-menubar.sh",
+                    "description": "Native menu bar controller (rsync.wa).",
+                    "category": "first_time",
+                    "kind": "script",
+                },
+                {
+                    "id": "install_desktop_shortcuts",
+                    "label": "Desktop Shortcuts",
+                    "script": "install-desktop-shortcuts.sh",
+                    "description": "Create Start/Stop/Status desktop commands.",
+                    "category": "first_time",
+                    "kind": "script",
+                },
+                {
+                    "id": "update_app",
+                    "label": "Update App",
+                    "script": "update-app.sh",
+                    "description": "Pull latest release if git checkout, or open release downloads.",
+                    "category": "maintenance",
+                    "kind": "script",
+                },
+                {
+                    "id": "repair_single_instance",
+                    "label": "Fix Duplicate Instances",
+                    "description": "Stop extra listeners and keep one active service.",
+                    "category": "repair",
+                    "kind": "internal",
+                },
+                {
+                    "id": "reinstall_launchagent",
+                    "label": "Reinstall LaunchAgent",
+                    "script": "install-launchagent.sh",
+                    "description": "Recreate and reload launch agent.",
+                    "category": "repair",
+                    "kind": "script",
+                },
+                {
+                    "id": "reinstall_menubar",
+                    "label": "Reinstall Menu Bar",
+                    "script": "install-menubar.sh",
+                    "description": "Rebuild and reinstall native menu bar app.",
+                    "category": "repair",
+                    "kind": "script",
+                },
+                {
+                    "id": "recheck_ssh_aliases",
+                    "label": "Recheck SSH Aliases",
+                    "description": "Force SSH connectivity probe for configured servers.",
+                    "category": "repair",
+                    "kind": "internal",
+                },
+            ]
+        elif os_id == "linux":
+            actions = [
+                {
+                    "id": "install_dependencies",
+                    "label": "Install Dependencies",
+                    "script": "install-deps.sh",
+                    "description": "Install/verify python3, ssh, and rsync.",
+                    "category": "first_time",
+                    "kind": "script",
+                },
+                {
+                    "id": "install_linux_autostart",
+                    "label": "Enable Autostart",
+                    "script": "install-linux-autostart.sh",
+                    "description": "Install user-level systemd service.",
+                    "category": "first_time",
+                    "kind": "script",
+                },
+                {
+                    "id": "install_linux_shortcuts",
+                    "label": "Desktop Shortcuts",
+                    "script": "install-linux-desktop-shortcuts.sh",
+                    "description": "Create desktop launcher entries.",
+                    "category": "first_time",
+                    "kind": "script",
+                },
+                {
+                    "id": "update_app",
+                    "label": "Update App",
+                    "script": "update-app.sh",
+                    "description": "Pull latest release if git checkout, or open release downloads.",
+                    "category": "maintenance",
+                    "kind": "script",
+                },
+                {
+                    "id": "repair_single_instance",
+                    "label": "Fix Duplicate Instances",
+                    "description": "Stop extra listeners and keep one active service.",
+                    "category": "repair",
+                    "kind": "internal",
+                },
+                {
+                    "id": "recheck_ssh_aliases",
+                    "label": "Recheck SSH Aliases",
+                    "description": "Force SSH connectivity probe for configured servers.",
+                    "category": "repair",
+                    "kind": "internal",
+                },
+            ]
+        elif os_id == "windows":
+            actions = [
+                {
+                    "id": "install_dependencies",
+                    "label": "Install Dependencies",
+                    "script": "install-windows-deps.ps1",
+                    "description": "Guide/install required dependencies for Windows.",
+                    "category": "first_time",
+                    "kind": "script",
+                },
+                {
+                    "id": "install_windows_shortcuts",
+                    "label": "Desktop Shortcuts",
+                    "script": "install-windows-shortcuts.ps1",
+                    "description": "Create PowerShell desktop shortcuts.",
+                    "category": "first_time",
+                    "kind": "script",
+                },
+                {
+                    "id": "run_windows_quickstart",
+                    "label": "Start App (Windows)",
+                    "script": "windows-quickstart.ps1",
+                    "description": "One-click start flow for Windows.",
+                    "category": "first_time",
+                    "kind": "script",
+                },
+                {
+                    "id": "update_app",
+                    "label": "Update App",
+                    "script": "update-app.ps1",
+                    "description": "Pull latest release if git checkout, or open release downloads.",
+                    "category": "maintenance",
+                    "kind": "script",
+                },
+                {
+                    "id": "repair_single_instance",
+                    "label": "Fix Duplicate Instances",
+                    "description": "Stop extra listeners and keep one active service.",
+                    "category": "repair",
+                    "kind": "internal",
+                },
+                {
+                    "id": "recheck_ssh_aliases",
+                    "label": "Recheck SSH Aliases",
+                    "description": "Force SSH connectivity probe for configured servers.",
+                    "category": "repair",
+                    "kind": "internal",
+                },
+            ]
+        return {"platform": info, "actions": actions, "checked_at": now_iso()}
+
+    def run_setup_action(self, action_id: str) -> dict[str, Any]:
+        options = self.setup_options()
+        action = next((item for item in options["actions"] if item["id"] == action_id), None)
+        if not action:
+            raise RuntimeError(f"Unsupported setup action for this OS: {action_id}")
+        kind = str(action.get("kind", "script"))
+        if kind == "internal":
+            if action_id == "repair_single_instance":
+                return self._repair_single_instance()
+            if action_id == "recheck_ssh_aliases":
+                return self._recheck_ssh_aliases()
+            raise RuntimeError(f"Unsupported internal setup action: {action_id}")
+        return self._script_action_result(action)
 
     def set_restart_callback(self, callback: Any) -> None:
         self._restart_callback = callback
@@ -2168,6 +2482,11 @@ class RequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/setup/options":
             self._send_json({"ok": True, "setup": self.app_state.setup_options()})
             return
+        if path == "/api/setup/health":
+            query = parse_qs(parsed.query)
+            force = query.get("force", ["0"])[0] == "1"
+            self._send_json({"ok": True, "health": self.app_state.setup_health(force=force)})
+            return
         if path == "/api/service/logs":
             query = parse_qs(parsed.query)
             tail = int(query.get("tail", ["140"])[0])
@@ -2259,6 +2578,9 @@ class RequestHandler(SimpleHTTPRequestHandler):
             if path == "/api/service/stop":
                 self._send_json({"ok": True, "message": "Stop requested"})
                 self.app_state.stop_service()
+                return
+            if path == "/api/setup/run-check":
+                self._send_json({"ok": True, "health": self.app_state.setup_health(force=True)})
                 return
             if path.startswith("/api/setup/"):
                 action_id = path.split("/")[3]

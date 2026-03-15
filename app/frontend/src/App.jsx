@@ -204,8 +204,9 @@ export default function App() {
 
   const [jobs, setJobs] = useState([]);
   const [service, setService] = useState(null);
-  const [checks, setChecks] = useState(null);
   const [setup, setSetup] = useState(null);
+  const [setupHealth, setSetupHealth] = useState(null);
+  const [setupResult, setSetupResult] = useState(null);
   const [onboarding, setOnboarding] = useState(null);
   const [connectivity, setConnectivity] = useState(null);
   const [locations, setLocations] = useState({ remote_locations: [], local_locations: [] });
@@ -334,14 +335,14 @@ export default function App() {
     setService(data.service);
   };
 
-  const loadChecks = async () => {
-    const data = await api("/api/system/checks");
-    setChecks(data.checks);
-  };
-
   const loadSetup = async () => {
     const data = await api("/api/setup/options");
     setSetup(data.setup);
+  };
+
+  const loadSetupHealth = async (force = false) => {
+    const data = await api(`/api/setup/health${force ? "?force=1" : ""}`);
+    setSetupHealth(data.health || null);
   };
 
   const loadOnboarding = async () => {
@@ -427,8 +428,8 @@ export default function App() {
     await Promise.all([
       loadJobs(),
       loadService(),
-      loadChecks(),
       loadSetup(),
+      loadSetupHealth(false),
       loadOnboarding(),
       loadConnectivity(true),
       loadLocations(),
@@ -536,8 +537,44 @@ export default function App() {
     try {
       const data = await api(`/api/setup/${actionId}`, { method: "POST" });
       const label = data.result?.action?.label || actionId;
-      addToast(`Completed: ${label}`, "ok", 3000);
-      await Promise.all([loadSetup(), loadChecks(), loadService()]);
+      setSetupResult(data.result || null);
+      addToast(
+        data.result?.success ? `Completed: ${label}` : `Failed: ${label}`,
+        data.result?.success ? "ok" : "err",
+        4200
+      );
+      await Promise.all([loadSetup(), loadService(), loadSetupHealth(true)]);
+    } catch (error) {
+      addToast(error.message, "err", 6000);
+    } finally {
+      setBusy(busyKey, false);
+    }
+  };
+
+  const runSetupCheck = async () => {
+    const busyKey = "setup-run-check";
+    setBusy(busyKey, true);
+    try {
+      const data = await api("/api/setup/run-check", { method: "POST" });
+      setSetupHealth(data.health || null);
+      const health = data.health || {};
+      const summary = {
+        action: { id: "run_setup_check", label: "Run Setup Check" },
+        success: health.overall === "ok",
+        level: health.overall === "ok" ? "ok" : "warn",
+        summary: {
+          title: "Guided setup check completed",
+          bullets: [
+            `Overall: ${health.overall || "unknown"}`,
+            `Errors: ${health.errors ?? "-"}`,
+            `Warnings: ${health.warnings ?? "-"}`,
+          ],
+        },
+        details: { report: health.report || "" },
+        ran_at: new Date().toISOString(),
+      };
+      setSetupResult(summary);
+      addToast(`Setup check: ${health.overall || "unknown"}`, health.overall === "ok" ? "ok" : "warn", 4200);
     } catch (error) {
       addToast(error.message, "err", 6000);
     } finally {
@@ -1799,32 +1836,74 @@ export default function App() {
       open={sectionsOpen.setupActions}
       onToggle={() => toggleSection("setupActions")}
     >
-      <div className="mb-3 flex flex-wrap gap-2">
-        {(Object.entries(checks?.commands || {}) || []).map(([name, info]) => (
-          <span className={statusClass(info.available ? "ok" : "err")} key={name}>
-            {name} · {info.available ? "ready" : "missing"}
-          </span>
-        ))}
-        {checks?.rsync_capabilities?.flavor ? (
-          <span className={statusClass(checks.compatibility_ready ? "ok" : "warn")}>
-            rsync profile · {checks.rsync_capabilities.flavor}
-          </span>
-        ) : null}
+      <div className="mb-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="font-semibold">Setup Health</div>
+          <div className="flex gap-2">
+            <button className="btn btn-ghost text-xs" disabled={busyMap["setup-run-check"]} onClick={() => loadSetupHealth(true).catch((e) => addToast(e.message, "err"))} type="button">
+              <RefreshCw className="h-3.5 w-3.5" /> Refresh Health
+            </button>
+            <button className="btn text-xs" disabled={busyMap["setup-run-check"]} onClick={runSetupCheck} type="button">
+              {busyMap["setup-run-check"] ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+              Run Setup Check
+            </button>
+            <button
+              className="btn btn-ghost text-xs"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(setupHealth?.report || "");
+                  addToast("Setup report copied", "ok");
+                } catch (error) {
+                  addToast(error.message, "err");
+                }
+              }}
+              type="button"
+            >
+              <Copy className="h-3.5 w-3.5" /> Copy Report
+            </button>
+          </div>
+        </div>
+        <div className="mb-2 flex flex-wrap gap-2 text-xs">
+          {(setupHealth?.items || []).map((item) => (
+            <span className={statusClass(item.state)} key={item.id}>
+              {item.label} · {item.state}
+            </span>
+          ))}
+        </div>
+        <div className="text-xs opacity-80">
+          overall <b>{setupHealth?.overall || "-"}</b> · errors <b>{setupHealth?.errors ?? "-"}</b> · warnings <b>{setupHealth?.warnings ?? "-"}</b>
+        </div>
+        <pre className="pre mt-2 h-36">{setupHealth?.report || "Run setup check to generate a report."}</pre>
       </div>
 
-      <div className="mb-3 grid gap-2 md:grid-cols-2">
-        {(setup?.actions || []).map((action) => (
-          <article className="row-card" key={action.id}>
-            <div className="min-w-0">
-              <div className="font-semibold">{action.label}</div>
-              <div className="text-xs opacity-75">{action.description}</div>
-            </div>
-            <button className="btn btn-ghost text-xs" disabled={busyMap[`setup-${action.id}`]} onClick={() => runSetupAction(action.id)} type="button">
-              {busyMap[`setup-${action.id}`] ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-              Run
-            </button>
-          </article>
-        ))}
+      <div className="mb-3 space-y-3">
+        {[
+          ["first_time", "First-Time Setup"],
+          ["maintenance", "Maintenance"],
+          ["repair", "Repair"],
+        ].map(([key, title]) => {
+          const actions = (setup?.actions || []).filter((item) => item.category === key);
+          if (!actions.length) return null;
+          return (
+            <section className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3" key={key}>
+              <div className="mb-2 font-semibold">{title}</div>
+              <div className="grid gap-2 md:grid-cols-2">
+                {actions.map((action) => (
+                  <article className="row-card" key={action.id}>
+                    <div className="min-w-0">
+                      <div className="font-semibold">{action.label}</div>
+                      <div className="text-xs opacity-75">{action.description}</div>
+                    </div>
+                    <button className="btn btn-ghost text-xs" disabled={busyMap[`setup-${action.id}`]} onClick={() => runSetupAction(action.id)} type="button">
+                      {busyMap[`setup-${action.id}`] ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                      Run
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
 
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-sm">
@@ -1842,6 +1921,25 @@ export default function App() {
             <Download className="h-3.5 w-3.5" /> Update App
           </button>
         </div>
+      </div>
+
+      <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-sm">
+        <div className="mb-1 font-semibold">Last Action Result</div>
+        <div className="mb-2 flex flex-wrap gap-2">
+          <span className={statusClass(setupResult?.level || "neutral")}>{setupResult?.summary?.title || "No action run yet."}</span>
+          {setupResult?.ran_at ? <span className={statusClass("neutral")}>{formatDate(setupResult.ran_at)}</span> : null}
+        </div>
+        <pre className="pre h-36">
+{setupResult
+  ? [
+      ...(setupResult.summary?.bullets || []),
+      "",
+      setupResult.details?.output || setupResult.details?.report || "",
+    ]
+      .join("\n")
+      .trim()
+  : "Run a setup action to view structured output."}
+        </pre>
       </div>
     </Collapsible>
   );
