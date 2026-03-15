@@ -1270,14 +1270,15 @@ export default function App() {
 
           <div className="mt-4 space-y-2">
             {(locations.remote_locations || []).map((item) => (
-              <article className="row-card" key={item.id}>
-                <div className="min-w-0">
+              <article className="location-card" key={item.id}>
+                <div className="min-w-0 space-y-1">
                   <div className="truncate text-sm font-semibold">{item.name}</div>
-                  <div className="mono text-xs opacity-80">
-                    {item.server}:{shortPath(item.remote_path, 40)}
+                  <div className="text-xs opacity-75">Remote source</div>
+                  <div className="mono break-all text-xs opacity-85">
+                    {item.server}:{item.remote_path}
                   </div>
                 </div>
-                <div className="flex gap-1">
+                <div className="location-actions">
                   <button
                     className="btn btn-ghost text-xs"
                     onClick={() => {
@@ -1340,12 +1341,13 @@ export default function App() {
 
           <div className="mt-4 space-y-2">
             {(locations.local_locations || []).map((item) => (
-              <article className="row-card" key={item.id}>
-                <div className="min-w-0">
+              <article className="location-card" key={item.id}>
+                <div className="min-w-0 space-y-1">
                   <div className="truncate text-sm font-semibold">{item.name}</div>
-                  <div className="mono text-xs opacity-80">{shortPath(item.local_path, 48)}</div>
+                  <div className="text-xs opacity-75">Local destination</div>
+                  <div className="mono break-all text-xs opacity-85">{item.local_path}</div>
                 </div>
-                <div className="flex gap-1">
+                <div className="location-actions">
                   <button
                     className="btn btn-ghost text-xs"
                     onClick={() => {
