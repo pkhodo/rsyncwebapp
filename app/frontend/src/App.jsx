@@ -124,6 +124,16 @@ function formatRunDuration(startedAt, finishedAt) {
   return `${seconds}s`;
 }
 
+function formatRelative(value) {
+  if (!value) return "-";
+  const at = new Date(value).getTime();
+  if (!Number.isFinite(at)) return "-";
+  const delta = Math.round((at - Date.now()) / 1000);
+  if (Math.abs(delta) < 2) return "now";
+  if (delta < 0) return `${Math.abs(delta)}s ago`;
+  return `in ${delta}s`;
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -586,6 +596,36 @@ export default function App() {
         await loadJobs();
         return;
       }
+      if (action === "clone") {
+        const item = jobs.find((entry) => entry.config.id === jobId);
+        if (!item) return;
+        const cfg = item.config;
+        const payload = {
+          name: `${cfg.name} copy`,
+          server: cfg.server,
+          remote_path: cfg.remote_path,
+          local_path: cfg.local_path,
+          mode: cfg.mode,
+          mirror_confirmed: !!cfg.mirror_confirmed,
+          timeout_seconds: cfg.timeout_seconds ?? 60,
+          contimeout_seconds: cfg.contimeout_seconds ?? 15,
+          retry_initial_seconds: cfg.retry_initial_seconds ?? 10,
+          retry_max_seconds: cfg.retry_max_seconds ?? 300,
+          bwlimit_kbps: cfg.bwlimit_kbps ?? 0,
+          nice_level: cfg.nice_level ?? 0,
+          allowed_start_hour: cfg.allowed_start_hour ?? -1,
+          allowed_end_hour: cfg.allowed_end_hour ?? -1,
+          dry_run: true,
+          auto_retry: !!cfg.auto_retry,
+          excludes: cfg.excludes || [],
+          extra_args: cfg.extra_args || [],
+        };
+        const data = await api("/api/jobs", { method: "POST", body: JSON.stringify(payload) });
+        addToast(`Cloned job as ${data.job?.config?.id || "new job"}`, "ok");
+        await loadJobs();
+        setView("jobs");
+        return;
+      }
       if (action === "test-connection") {
         const data = await api(`/api/jobs/${jobId}/test-connection`, { method: "POST" });
         const result = data.result || {};
@@ -619,6 +659,7 @@ export default function App() {
         "start-live": "Live run requested",
         "start": "Run requested",
         "dry-run": "Dry-run requested",
+        "clone": "Clone requested",
         "pause": "Pause requested",
         "resume": "Resume requested",
         "cancel": "Cancel requested",
@@ -752,6 +793,35 @@ export default function App() {
       const path = kind === "remote" ? `/api/locations/remote/${id}` : `/api/locations/local/${id}`;
       await api(path, { method: "DELETE" });
       addToast("Location deleted", "ok");
+      await loadLocations();
+    } catch (error) {
+      addToast(error.message, "err", 5200);
+    } finally {
+      setBusy(busyKey, false);
+    }
+  };
+
+  const cloneLocation = async (kind, item) => {
+    const busyKey = `clone-${kind}-${item.id}`;
+    setBusy(busyKey, true);
+    try {
+      if (kind === "remote") {
+        const body = {
+          name: `${item.name} copy`,
+          server: item.server,
+          remote_path: item.remote_path,
+          notes: item.notes || "",
+        };
+        await api("/api/locations/remote", { method: "POST", body: JSON.stringify(body) });
+      } else {
+        const body = {
+          name: `${item.name} copy`,
+          local_path: item.local_path,
+          notes: item.notes || "",
+        };
+        await api("/api/locations/local", { method: "POST", body: JSON.stringify(body) });
+      }
+      addToast("Location cloned", "ok");
       await loadLocations();
     } catch (error) {
       addToast(error.message, "err", 5200);
@@ -1058,6 +1128,14 @@ export default function App() {
                   retries <b>{rt.retries}</b> · auto-retry <b>{cfg.auto_retry ? "on" : "off"}</b>
                 </div>
                 <div className="mt-1">
+                  started {formatDate(rt.last_started_at)} ({formatRelative(rt.last_started_at)}) · finished{" "}
+                  {formatDate(rt.last_finished_at)} ({formatRelative(rt.last_finished_at)})
+                </div>
+                <div className="mt-1">
+                  next retry {rt.next_retry_at ? `${formatDate(rt.next_retry_at)} (${formatRelative(rt.next_retry_at)})` : "n/a"} · pid{" "}
+                  {rt.pid ?? "-"}
+                </div>
+                <div className="mt-1">
                   last error {rt.last_error ? <span className="text-[var(--bad)]">{rt.last_error}</span> : "none"}
                 </div>
               </div>
@@ -1091,6 +1169,9 @@ export default function App() {
                 </button>
                 <button className="btn btn-ghost" onClick={() => runJobAction("log", cfg.id)} type="button">
                   <Logs className="h-3.5 w-3.5" /> Logs
+                </button>
+                <button className="btn btn-ghost" onClick={() => runJobAction("clone", cfg.id)} type="button">
+                  <Copy className="h-3.5 w-3.5" /> Clone
                 </button>
                 <button className="btn btn-ghost" onClick={() => runJobAction("edit", cfg.id)} type="button">
                   <Wrench className="h-3.5 w-3.5" /> Edit
@@ -1173,6 +1254,9 @@ export default function App() {
                   <button className="btn btn-ghost text-xs" onClick={() => setRemoteDraft(item)} type="button">
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </button>
+                  <button className="btn btn-ghost text-xs" onClick={() => cloneLocation("remote", item)} type="button">
+                    <Copy className="h-3.5 w-3.5" /> Clone
+                  </button>
                   <button className="btn btn-danger text-xs" onClick={() => deleteLocation("remote", item.id)} type="button">
                     <Trash2 className="h-3.5 w-3.5" /> Delete
                   </button>
@@ -1237,6 +1321,9 @@ export default function App() {
                   </button>
                   <button className="btn btn-ghost text-xs" onClick={() => setLocalDraft(item)} type="button">
                     <Pencil className="h-3.5 w-3.5" /> Edit
+                  </button>
+                  <button className="btn btn-ghost text-xs" onClick={() => cloneLocation("local", item)} type="button">
+                    <Copy className="h-3.5 w-3.5" /> Clone
                   </button>
                   <button className="btn btn-danger text-xs" onClick={() => deleteLocation("local", item.id)} type="button">
                     <Trash2 className="h-3.5 w-3.5" /> Delete
