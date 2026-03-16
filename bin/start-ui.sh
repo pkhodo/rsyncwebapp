@@ -13,6 +13,15 @@ AGENT_FILE="${HOME}/Library/LaunchAgents/${AGENT_LABEL}.plist"
 HOST="${RSYNC_WEBAPP_HOST:-127.0.0.1}"
 PORT="${RSYNC_WEBAPP_PORT:-8787}"
 
+listener_pids() {
+  lsof -ti "tcp:${PORT}" 2>/dev/null | sort -u
+}
+
+pid_cwd() {
+  local pid="$1"
+  lsof -a -p "${pid}" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n1
+}
+
 mkdir -p "${LOG_DIR}"
 
 if [ ! -f "${FRONTEND_INDEX}" ]; then
@@ -21,10 +30,47 @@ if [ ! -f "${FRONTEND_INDEX}" ]; then
   exit 1
 fi
 
-if lsof -ti "tcp:${PORT}" >/dev/null 2>&1; then
-  echo "Rsync Web App already running on port ${PORT}"
-  echo "URL: http://rsync.localhost:${PORT}"
-  exit 0
+if listener_pids >/dev/null 2>&1 && [ -n "$(listener_pids)" ]; then
+  MATCHING_PIDS=()
+  FOREIGN_PIDS=()
+  while IFS= read -r pid; do
+    [ -z "${pid}" ] && continue
+    cwd="$(pid_cwd "${pid}")"
+    if [ "${cwd}" = "${ROOT_DIR}" ]; then
+      MATCHING_PIDS+=("${pid}")
+    else
+      FOREIGN_PIDS+=("${pid}")
+    fi
+  done < <(listener_pids)
+
+  if [ "${#MATCHING_PIDS[@]}" -gt 0 ]; then
+    echo "Rsync Web App already running for this repo on port ${PORT} (PID ${MATCHING_PIDS[0]})."
+    if [ "${#FOREIGN_PIDS[@]}" -gt 0 ]; then
+      echo "Warning: foreign listener(s) also detected on ${PORT}: ${FOREIGN_PIDS[*]}"
+      echo "Run ./bin/stop-ui.sh to clean duplicates."
+    fi
+    echo "URL: http://rsync.localhost:${PORT}"
+    exit 0
+  fi
+
+  echo "Port ${PORT} is occupied by another checkout/service. Taking over for:"
+  echo "  ${ROOT_DIR}"
+  for pid in "${FOREIGN_PIDS[@]}"; do
+    echo "Stopping foreign listener PID ${pid} (cwd: $(pid_cwd "${pid}"))"
+    kill "${pid}" >/dev/null 2>&1 || true
+  done
+  sleep 1
+  if [ -n "$(listener_pids)" ]; then
+    while IFS= read -r pid; do
+      [ -z "${pid}" ] && continue
+      kill -9 "${pid}" >/dev/null 2>&1 || true
+    done < <(listener_pids)
+    sleep 1
+  fi
+  if [ -n "$(listener_pids)" ]; then
+    echo "Could not free port ${PORT}. Stop conflicting process manually."
+    exit 1
+  fi
 fi
 
 agent_matches_repo="0"

@@ -17,6 +17,15 @@ if lsof -ti "tcp:${PORT}" >/dev/null 2>&1; then
   PID="$(echo "${PIDS}" | awk '{print $1}')"
   echo "Rsync Web App: running (PID ${PID})"
   echo "Port listeners (${PORT}): ${COUNT} -> ${PIDS}"
+  for p in ${PIDS}; do
+    CWD="$(lsof -a -p "${p}" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n1)"
+    if [ "${CWD}" = "${ROOT_DIR}" ]; then
+      TAG="current-repo"
+    else
+      TAG="foreign-repo"
+    fi
+    echo "  PID ${p} cwd=${CWD:-unknown} (${TAG})"
+  done
   if [ -f "${AGENT_FILE}" ]; then
     if [ "${AGENT_MATCHES_REPO}" = "1" ]; then
       echo "LaunchAgent: installed (${AGENT_LABEL})"
