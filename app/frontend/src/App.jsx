@@ -51,6 +51,8 @@ const UPDATE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const EMPTY_FORM = {
   id: "",
   name: "",
+  remote_location_id: "",
+  local_location_id: "",
   server: "",
   remote_path: "",
   local_path: "",
@@ -99,6 +101,34 @@ function shortPath(value, max = 54) {
   if (!value) return "-";
   if (value.length <= max) return value;
   return `...${value.slice(-(max - 3))}`;
+}
+
+function normalizePathForMatch(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (trimmed === "/") return "/";
+  return trimmed.replace(/\/+$/, "");
+}
+
+function matchRemoteLocation(items, server, remotePath) {
+  const serverKey = String(server || "").trim();
+  const pathKey = normalizePathForMatch(remotePath);
+  if (!serverKey || !pathKey) return null;
+  return (
+    (items || []).find(
+      (item) =>
+        String(item.server || "").trim() === serverKey &&
+        normalizePathForMatch(item.remote_path) === pathKey
+    ) || null
+  );
+}
+
+function matchLocalLocation(items, localPath) {
+  const pathKey = normalizePathForMatch(localPath);
+  if (!pathKey) return null;
+  return (
+    (items || []).find((item) => normalizePathForMatch(item.local_path) === pathKey) || null
+  );
 }
 
 function formatBytes(value) {
@@ -247,6 +277,66 @@ export default function App() {
     logsService: true,
     setupActions: true,
   });
+
+  const remoteLocations = locations.remote_locations || [];
+  const localLocations = locations.local_locations || [];
+  const remoteById = useMemo(
+    () => Object.fromEntries(remoteLocations.map((item) => [item.id, item])),
+    [remoteLocations]
+  );
+  const localById = useMemo(
+    () => Object.fromEntries(localLocations.map((item) => [item.id, item])),
+    [localLocations]
+  );
+
+  const inferRemoteLocationId = (serverValue, remotePathValue) => {
+    const match = matchRemoteLocation(remoteLocations, serverValue, remotePathValue);
+    return match ? match.id : "";
+  };
+
+  const inferLocalLocationId = (localPathValue) => {
+    const match = matchLocalLocation(localLocations, localPathValue);
+    return match ? match.id : "";
+  };
+
+  const suggestJobName = (remoteName, localName) => {
+    const left = String(remoteName || "").trim();
+    const right = String(localName || "").trim();
+    if (left && right) return `${left} -> ${right}`;
+    return left || right || "";
+  };
+
+  const applyRemoteToBuilder = (remoteItem) => {
+    if (!remoteItem) return;
+    setJobForm((prev) => {
+      const selectedLocal =
+        localById[prev.local_location_id] || matchLocalLocation(localLocations, prev.local_path);
+      const nextName = prev.name || suggestJobName(remoteItem.name, selectedLocal?.name);
+      return {
+        ...prev,
+        remote_location_id: remoteItem.id,
+        server: remoteItem.server,
+        remote_path: remoteItem.remote_path,
+        name: nextName,
+      };
+    });
+  };
+
+  const applyLocalToBuilder = (localItem) => {
+    if (!localItem) return;
+    setJobForm((prev) => {
+      const selectedRemote =
+        remoteById[prev.remote_location_id] ||
+        matchRemoteLocation(remoteLocations, prev.server, prev.remote_path);
+      const nextName = prev.name || suggestJobName(selectedRemote?.name, localItem.name);
+      return {
+        ...prev,
+        local_location_id: localItem.id,
+        local_path: localItem.local_path,
+        name: nextName,
+      };
+    });
+  };
 
   const addToast = (message, level = "ok", timeoutMs = 3400) => {
     const key = `${level}:${message}`;
@@ -536,6 +626,27 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    setJobForm((prev) => {
+      const remoteId =
+        prev.remote_location_id && remoteById[prev.remote_location_id]
+          ? prev.remote_location_id
+          : inferRemoteLocationId(prev.server, prev.remote_path);
+      const localId =
+        prev.local_location_id && localById[prev.local_location_id]
+          ? prev.local_location_id
+          : inferLocalLocationId(prev.local_path);
+      if (remoteId === prev.remote_location_id && localId === prev.local_location_id) {
+        return prev;
+      }
+      return {
+        ...prev,
+        remote_location_id: remoteId,
+        local_location_id: localId,
+      };
+    });
+  }, [remoteById, localById]);
+
   const runServiceAction = async (path, busyKey, successText) => {
     setBusy(busyKey, true);
     try {
@@ -608,9 +719,13 @@ export default function App() {
         const item = jobs.find((entry) => entry.config.id === jobId);
         if (!item) return;
         const cfg = item.config;
+        const matchedRemote = matchRemoteLocation(remoteLocations, cfg.server, cfg.remote_path);
+        const matchedLocal = matchLocalLocation(localLocations, cfg.local_path);
         setJobForm({
           id: cfg.id || "",
           name: cfg.name || "",
+          remote_location_id: matchedRemote?.id || "",
+          local_location_id: matchedLocal?.id || "",
           server: cfg.server || "",
           remote_path: cfg.remote_path || "",
           local_path: cfg.local_path || "",
@@ -1127,6 +1242,8 @@ export default function App() {
           const cfg = job.config;
           const rt = job.runtime;
           const lastRun = job.last_run || null;
+          const remoteProfile = matchRemoteLocation(remoteLocations, cfg.server, cfg.remote_path);
+          const localProfile = matchLocalLocation(localLocations, cfg.local_path);
           const progress = Math.max(0, Math.min(100, Number(rt.progress_percent || 0)));
           const runDry = Number(lastRun?.dry_run || 0) === 1 || rt.last_run_type === "dry-run";
           const transferred = Number(lastRun?.transferred_files ?? rt.last_run_stats?.transferred_files ?? 0);
@@ -1165,6 +1282,12 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <span className={statusClass(remoteProfile ? "ok" : "warn")}>
+                    remote {remoteProfile?.name || "custom"}
+                  </span>
+                  <span className={statusClass(localProfile ? "ok" : "warn")}>
+                    local {localProfile?.name || "custom"}
+                  </span>
                   <span className={statusClass("ok")}>
                     {runDry ? "last mode dry-run" : "last mode live"}
                   </span>
@@ -1300,7 +1423,7 @@ export default function App() {
                   <button
                     className="btn btn-ghost text-xs"
                     onClick={() => {
-                      setJobForm((prev) => ({ ...prev, server: item.server, remote_path: item.remote_path, name: prev.name || item.name }));
+                      applyRemoteToBuilder(item);
                       setView("builder");
                     }}
                     type="button"
@@ -1369,7 +1492,7 @@ export default function App() {
                   <button
                     className="btn btn-ghost text-xs"
                     onClick={() => {
-                      setJobForm((prev) => ({ ...prev, local_path: item.local_path, name: prev.name || item.name }));
+                      applyLocalToBuilder(item);
                       setView("builder");
                     }}
                     type="button"
@@ -1521,9 +1644,17 @@ export default function App() {
   const showAdvanced = editorMode !== "basic";
   const showExpert = editorMode === "expert";
 
-  const renderBuilder = () => (
-    <Collapsible title="Job Builder" icon={Wrench} open={sectionsOpen.builder} onToggle={() => toggleSection("builder")}>
-      <form className="space-y-3" onSubmit={saveJob}>
+  const renderBuilder = () => {
+    const selectedRemote =
+      remoteById[jobForm.remote_location_id] ||
+      matchRemoteLocation(remoteLocations, jobForm.server, jobForm.remote_path);
+    const selectedLocal =
+      localById[jobForm.local_location_id] ||
+      matchLocalLocation(localLocations, jobForm.local_path);
+
+    return (
+      <Collapsible title="Job Builder" icon={Wrench} open={sectionsOpen.builder} onToggle={() => toggleSection("builder")}>
+        <form className="space-y-3" onSubmit={saveJob}>
         <div className="flex flex-wrap gap-2">
           {["basic", "advanced", "expert"].map((mode) => (
             <button
@@ -1535,6 +1666,68 @@ export default function App() {
               {mode}
             </button>
           ))}
+        </div>
+
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+          <div className="mb-2 font-semibold">Location Profiles</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label>
+              <span className="field-label">Remote source profile</span>
+              <select
+                className="select"
+                onChange={(event) => {
+                  const nextId = event.target.value;
+                  if (!nextId) {
+                    setJobForm((prev) => ({ ...prev, remote_location_id: "" }));
+                    return;
+                  }
+                  applyRemoteToBuilder(remoteById[nextId] || null);
+                }}
+                value={selectedRemote?.id || ""}
+              >
+                <option value="">Custom remote (manual)</option>
+                {remoteLocations.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} · {item.server}:{item.remote_path}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span className="field-label">Local destination profile</span>
+              <select
+                className="select"
+                onChange={(event) => {
+                  const nextId = event.target.value;
+                  if (!nextId) {
+                    setJobForm((prev) => ({ ...prev, local_location_id: "" }));
+                    return;
+                  }
+                  applyLocalToBuilder(localById[nextId] || null);
+                }}
+                value={selectedLocal?.id || ""}
+              >
+                <option value="">Custom local (manual)</option>
+                {localLocations.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} · {item.local_path}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+            <span className={statusClass(selectedRemote ? "ok" : "warn")}>
+              remote profile {selectedRemote?.name || "custom"}
+            </span>
+            <span className={statusClass(selectedLocal ? "ok" : "warn")}>
+              local profile {selectedLocal?.name || "custom"}
+            </span>
+            <span className={statusClass(selectedRemote && selectedLocal ? "ok" : "neutral")}>
+              {selectedRemote && selectedLocal ? "profiles linked" : "manual fields still editable"}
+            </span>
+          </div>
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
@@ -1564,7 +1757,14 @@ export default function App() {
             <span className="field-label">SSH server</span>
             <input
               className="input"
-              onChange={(event) => setJobForm((prev) => ({ ...prev, server: event.target.value }))}
+              onChange={(event) => {
+                const nextServer = event.target.value;
+                setJobForm((prev) => ({
+                  ...prev,
+                  server: nextServer,
+                  remote_location_id: inferRemoteLocationId(nextServer, prev.remote_path),
+                }));
+              }}
               placeholder="user@host"
               required
               value={jobForm.server}
@@ -1593,7 +1793,14 @@ export default function App() {
             <span className="field-label">Remote path</span>
             <input
               className="input"
-              onChange={(event) => setJobForm((prev) => ({ ...prev, remote_path: event.target.value }))}
+              onChange={(event) => {
+                const nextRemotePath = event.target.value;
+                setJobForm((prev) => ({
+                  ...prev,
+                  remote_path: nextRemotePath,
+                  remote_location_id: inferRemoteLocationId(prev.server, nextRemotePath),
+                }));
+              }}
               placeholder="/remote/path"
               required
               value={jobForm.remote_path}
@@ -1604,7 +1811,14 @@ export default function App() {
             <span className="field-label">Local path</span>
             <input
               className="input"
-              onChange={(event) => setJobForm((prev) => ({ ...prev, local_path: event.target.value }))}
+              onChange={(event) => {
+                const nextLocalPath = event.target.value;
+                setJobForm((prev) => ({
+                  ...prev,
+                  local_path: nextLocalPath,
+                  local_location_id: inferLocalLocationId(nextLocalPath),
+                }));
+              }}
               placeholder="/absolute/local/path"
               required
               value={jobForm.local_path}
@@ -1792,9 +2006,10 @@ export default function App() {
             <X className="h-3.5 w-3.5" /> Clear
           </button>
         </div>
-      </form>
-    </Collapsible>
-  );
+        </form>
+      </Collapsible>
+    );
+  };
 
   const renderLogs = () => (
     <div className="space-y-4">
