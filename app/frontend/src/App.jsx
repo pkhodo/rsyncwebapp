@@ -371,7 +371,7 @@ export default function App() {
       const status = job.runtime.status;
       const pct = Number(job.runtime.progress_percent || 0);
       progressTotal += Number.isFinite(pct) ? pct : 0;
-      if (status === "running") counters.running += 1;
+      if (status === "running" || status === "running_external") counters.running += 1;
       if (status === "waiting_network" || status === "waiting_window") counters.waiting += 1;
       if (status === "failed") counters.failed += 1;
       if (status === "completed") counters.completed += 1;
@@ -1279,6 +1279,9 @@ export default function App() {
           const remoteProfile = matchRemoteLocation(remoteLocations, cfg.server, cfg.remote_path);
           const localProfile = matchLocalLocation(localLocations, cfg.local_path);
           const progress = Math.max(0, Math.min(100, Number(rt.progress_percent || 0)));
+          const isActiveStatus = ["running", "running_external", "paused", "paused_service", "waiting_network", "waiting_window"].includes(
+            String(rt.status || "")
+          );
           const runDry = Number(lastRun?.dry_run || 0) === 1 || rt.last_run_type === "dry-run";
           const transferred = Number(lastRun?.transferred_files ?? rt.last_run_stats?.transferred_files ?? 0);
           const deleted = Number(lastRun?.deleted_files ?? rt.last_run_stats?.deleted_files ?? 0);
@@ -1287,7 +1290,13 @@ export default function App() {
           const lastExitCode = lastRun?.exit_code ?? rt.last_exit_code;
           const lastDuration = formatRunDuration(lastRun?.started_at, lastRun?.finished_at);
           const statusTone =
-            rt.status === "failed" ? "err" : rt.status === "running" ? "ok" : rt.status === "completed" ? "ok" : "warn";
+            rt.status === "failed"
+              ? "err"
+              : rt.status === "running" || rt.status === "running_external"
+                ? "ok"
+                : rt.status === "completed"
+                  ? "ok"
+                  : "warn";
           return (
             <article className="job-card" key={cfg.id}>
               <div className="flex items-start justify-between gap-3">
@@ -1350,6 +1359,11 @@ export default function App() {
                 <div className="mt-1">
                   last error {rt.last_error ? <span className="text-[var(--bad)]">{rt.last_error}</span> : "none"}
                 </div>
+                {rt.status === "running_external" ? (
+                  <div className="mt-1 text-[var(--warn)]">
+                    Detected external rsync process (PID {rt.pid || "?"}) after restart.
+                  </div>
+                ) : null}
               </div>
 
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-black/20">
@@ -1358,19 +1372,19 @@ export default function App() {
               <div className="mt-1 text-xs opacity-70">{rt.last_run_summary || rt.progress_line || "No progress output yet."}</div>
 
               <div className="mt-3 flex flex-wrap gap-2">
-                <button className="btn" disabled={busyMap[`job-start-live-${cfg.id}`]} onClick={() => runJobAction("start-live", cfg.id)} type="button">
+                <button className="btn" disabled={busyMap[`job-start-live-${cfg.id}`] || isActiveStatus} onClick={() => runJobAction("start-live", cfg.id)} type="button">
                   <Play className="h-3.5 w-3.5" /> Run Live
                 </button>
-                <button className="btn btn-ghost" onClick={() => runJobAction("dry-run", cfg.id)} type="button">
+                <button className="btn btn-ghost" disabled={isActiveStatus} onClick={() => runJobAction("dry-run", cfg.id)} type="button">
                   <TestTubeDiagonal className="h-3.5 w-3.5" /> Run Dry-Run
                 </button>
-                <button className="btn btn-ghost" onClick={() => runJobAction("pause", cfg.id)} type="button">
+                <button className="btn btn-ghost" disabled={rt.status === "running_external"} onClick={() => runJobAction("pause", cfg.id)} type="button">
                   <CirclePause className="h-3.5 w-3.5" /> Pause
                 </button>
-                <button className="btn btn-ghost" onClick={() => runJobAction("resume", cfg.id)} type="button">
+                <button className="btn btn-ghost" disabled={rt.status === "running_external"} onClick={() => runJobAction("resume", cfg.id)} type="button">
                   <CirclePlay className="h-3.5 w-3.5" /> Resume
                 </button>
-                <button className="btn btn-ghost" onClick={() => runJobAction("cancel", cfg.id)} type="button">
+                <button className="btn btn-ghost" disabled={rt.status === "running_external"} onClick={() => runJobAction("cancel", cfg.id)} type="button">
                   <CircleSlash2 className="h-3.5 w-3.5" /> Cancel
                 </button>
                 <button className="btn btn-ghost" onClick={() => runJobAction("test-connection", cfg.id)} type="button">

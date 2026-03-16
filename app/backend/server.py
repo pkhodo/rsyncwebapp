@@ -480,7 +480,7 @@ class JobConfig:
 
 @dataclass
 class JobRuntime:
-    status: str = "idle"  # idle|running|paused|paused_service|waiting_network|waiting_window|completed|failed|canceled
+    status: str = "idle"  # idle|running|running_external|paused|paused_service|waiting_network|waiting_window|completed|failed|canceled
     progress_percent: float = 0.0
     progress_line: str = ""
     attempts: int = 0
@@ -558,7 +558,14 @@ class JobControl:
 
     def update_config(self, new_config: JobConfig) -> None:
         with self._lock:
-            if self.runtime.status in {"running", "paused", "paused_service", "waiting_network", "waiting_window"}:
+            if self.runtime.status in {
+                "running",
+                "running_external",
+                "paused",
+                "paused_service",
+                "waiting_network",
+                "waiting_window",
+            }:
                 raise RuntimeError("Cannot edit a running job")
             self.config = new_config
 
@@ -745,7 +752,14 @@ class JobControl:
         if force_dry_run and force_live:
             raise RuntimeError("Cannot request both dry-run and live mode at the same time.")
         with self._lock:
-            if self.runtime.status in {"running", "paused", "paused_service", "waiting_network", "waiting_window"}:
+            if self.runtime.status in {
+                "running",
+                "running_external",
+                "paused",
+                "paused_service",
+                "waiting_network",
+                "waiting_window",
+            }:
                 raise RuntimeError("Job already running")
             if self._service_pause_checker():
                 raise RuntimeError("Service auto-sync is paused. Resume service before starting jobs.")
@@ -792,6 +806,10 @@ class JobControl:
 
     def pause(self) -> None:
         with self._lock:
+            if self.runtime.status == "running_external":
+                raise RuntimeError(
+                    "Job is running outside the current app session. Stop it manually."
+                )
             if self.runtime.status != "running" or not self._process:
                 raise RuntimeError("Job is not running")
             os.killpg(os.getpgid(self._process.pid), signal.SIGSTOP)
@@ -809,6 +827,11 @@ class JobControl:
         self._record_event("action", "resumed", "Resumed by user.")
 
     def cancel(self) -> None:
+        with self._lock:
+            if self.runtime.status == "running_external":
+                raise RuntimeError(
+                    "Job is running outside the current app session. Stop it manually."
+                )
         self._cancel_requested.set()
         with self._lock:
             proc = self._process
@@ -1097,11 +1120,13 @@ class AppState:
         self._connectivity_cache: dict[str, dict[str, Any]] = {}
         self._rsync_capabilities_cache: dict[str, Any] | None = None
         self._update_check_cache: dict[str, Any] | None = None
+        self._external_runtime_checked_at: float = 0.0
         self._restart_callback: Any = None
         self._stop_callback: Any = None
         self._load_settings()
         self._load_jobs()
         self._load_locations()
+        self._refresh_external_runtime(force=True)
 
     def _list_listener_pids(self) -> list[int]:
         if not shutil.which("lsof"):
@@ -1242,12 +1267,76 @@ class AppState:
         LOCATIONS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def list_jobs(self) -> list[dict[str, Any]]:
+        self._refresh_external_runtime(force=False)
         with self._lock:
             items = [job.serialize() for job in self.jobs.values()]
         latest_runs = self.history.get_latest_runs([item["config"]["id"] for item in items])
         for item in items:
             item["last_run"] = latest_runs.get(item["config"]["id"])
         return items
+
+    def _list_rsync_processes(self) -> list[tuple[int, str]]:
+        proc = subprocess.run(
+            ["ps", "-ax", "-o", "pid=,command="],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return []
+        rows: list[tuple[int, str]] = []
+        for raw_line in proc.stdout.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            parts = line.split(maxsplit=1)
+            if len(parts) < 2:
+                continue
+            try:
+                pid = int(parts[0])
+            except ValueError:
+                continue
+            command = parts[1]
+            if "rsync" not in command:
+                continue
+            rows.append((pid, command))
+        return rows
+
+    def _match_external_rsync_pid(self, cfg: JobConfig, processes: list[tuple[int, str]]) -> int | None:
+        src = f"{cfg.server}:{cfg.remote_path.rstrip('/')}/"
+        dst = f"{cfg.local_path.rstrip('/')}/"
+        for pid, command in processes:
+            if src in command and dst in command:
+                return pid
+        return None
+
+    def _refresh_external_runtime(self, force: bool = False) -> None:
+        now_ts = time.time()
+        if not force and (now_ts - self._external_runtime_checked_at) < 5:
+            return
+        self._external_runtime_checked_at = now_ts
+        processes = self._list_rsync_processes()
+        with self._lock:
+            jobs = list(self.jobs.values())
+        for job in jobs:
+            with job._lock:
+                # Keep actively-managed in-process runs untouched.
+                if job._process is not None:
+                    continue
+                status = job.runtime.status
+                if status in {"running", "paused", "waiting_network", "waiting_window", "paused_service"}:
+                    continue
+                matched_pid = self._match_external_rsync_pid(job.config, processes)
+                if matched_pid:
+                    job.runtime.status = "running_external"
+                    job.runtime.pid = matched_pid
+                    job.runtime.next_retry_at = None
+                    job.runtime.last_error = ""
+                    job.runtime.progress_line = (
+                        "Detected running rsync process from outside the current app session."
+                    )
+                elif status == "running_external":
+                    job.runtime.status = "idle"
+                    job.runtime.pid = None
 
     def list_locations(self) -> dict[str, Any]:
         with self._locations_lock:
@@ -1461,7 +1550,14 @@ class AppState:
     def delete(self, job_id: str) -> None:
         job = self.get(job_id)
         runtime = job.runtime.status
-        if runtime in {"running", "paused", "paused_service", "waiting_network", "waiting_window"}:
+        if runtime in {
+            "running",
+            "running_external",
+            "paused",
+            "paused_service",
+            "waiting_network",
+            "waiting_window",
+        }:
             raise RuntimeError("Cannot delete a running job")
         with self._lock:
             del self.jobs[job_id]
