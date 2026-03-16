@@ -515,10 +515,10 @@ export default function App() {
     if (!showToast) return;
     if (data.update?.ok && data.update?.update_available) {
       if (data.update?.channel === "release") {
-        addToast("New release available. Use Setup > Update App.", "warn", 4200);
+        addToast("New release available. Open Update Center to install.", "warn", 4200);
         return;
       }
-      addToast("New commit available. Use Setup > Update App.", "warn", 4200);
+      addToast("New commit available. Open Update Center to install.", "warn", 4200);
       return;
     }
     if (data.update?.ok && data.update?.channel === "release") {
@@ -530,6 +530,40 @@ export default function App() {
       return;
     }
     addToast("Update check completed.", "ok", 2400);
+  };
+
+  const renderUpdateCenter = (dense = false) => {
+    const channel = updateInfo?.channel || "unknown";
+    const detail =
+      channel === "git" || channel === "github_commit"
+        ? `Commit channel ${updateInfo?.branch || "main"} · local ${updateInfo?.local_commit || "-"} · remote ${updateInfo?.remote_commit || "-"}`
+        : `Release channel · current v${updateInfo?.current_version || "-"} · latest v${updateInfo?.latest_version || "-"}`;
+    return (
+      <section className={dense ? "rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3" : `${panelClass()}`}>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="font-semibold">Update Center</div>
+          <span className={statusClass(updateStatusPill.level)}>{updateStatusPill.text}</span>
+        </div>
+        <div className="text-xs opacity-80">{detail}</div>
+        <div className="mt-1 text-xs opacity-70">
+          last checked {updateInfo?.checked_at ? formatDate(updateInfo.checked_at) : "-"}
+        </div>
+        {updateInfo?.error ? (
+          <div className="mt-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-2 text-xs text-[var(--warn)]">
+            {updateInfo.error}
+          </div>
+        ) : null}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button className="btn" onClick={() => checkUpdates(true, true).catch((e) => addToast(e.message, "err"))} type="button">
+            <RefreshCw className="h-3.5 w-3.5" /> Check Updates
+          </button>
+          <button className="btn btn-ghost" disabled={busyMap["setup-update_app"]} onClick={() => runSetupAction("update_app")} type="button">
+            {busyMap["setup-update_app"] ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            Update App
+          </button>
+        </div>
+      </section>
+    );
   };
 
   const refreshAll = async () => {
@@ -2117,7 +2151,9 @@ export default function App() {
           ["maintenance", "Maintenance"],
           ["repair", "Repair"],
         ].map(([key, title]) => {
-          const actions = (setup?.actions || []).filter((item) => item.category === key);
+          const actions = (setup?.actions || []).filter(
+            (item) => item.category === key && item.id !== "update_app"
+          );
           if (!actions.length) return null;
           return (
             <section className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3" key={key}>
@@ -2142,19 +2178,9 @@ export default function App() {
       </div>
 
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-sm">
-        <div className="mb-2 font-semibold">Update channel</div>
-        <div className="mb-2 opacity-80">
-          {updateInfo?.channel === "git" || updateInfo?.channel === "github_commit"
-            ? `Commit channel ${updateInfo.branch || "main"} · local ${updateInfo.local_commit || "-"} · remote ${updateInfo.remote_commit || "-"}`
-            : `Release channel · current v${updateInfo?.current_version || "-"} · latest v${updateInfo?.latest_version || "-"} `}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button className="btn" onClick={() => checkUpdates(true, true).catch((e) => addToast(e.message, "err"))} type="button">
-            <RefreshCw className="h-3.5 w-3.5" /> Check Updates
-          </button>
-          <button className="btn btn-ghost" onClick={() => runSetupAction("update_app")} type="button">
-            <Download className="h-3.5 w-3.5" /> Update App
-          </button>
+        <div className="mb-2 font-semibold">Updates</div>
+        <div className="opacity-80">
+          Update controls are centralized in <b>Update Center</b> (sidebar on desktop, top card on smaller screens).
         </div>
       </div>
 
@@ -2221,8 +2247,9 @@ export default function App() {
             <span className={statusClass(derived.connReachable === derived.connTotal ? "ok" : "warn")}>
               Connectivity: {derived.connReachable}/{derived.connTotal}
             </span>
-            <span className={statusClass(updateStatusPill.level)}>{updateStatusPill.text}</span>
           </div>
+
+          {renderUpdateCenter(true)}
         </aside>
 
         <main className="min-w-0 flex-1 space-y-4">
@@ -2299,6 +2326,8 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="xl:hidden">{renderUpdateCenter(true)}</div>
+
               <div className="flex flex-wrap gap-2 text-xs">
                 <span className={statusClass(service ? "ok" : "warn")}>
                   <Cpu className="h-3.5 w-3.5" /> service {service ? `${service.uptime_seconds}s uptime` : "loading"}
@@ -2311,9 +2340,6 @@ export default function App() {
                 </span>
                 <span className={statusClass(derived.connReachable === derived.connTotal ? "ok" : "warn")}>
                   <Network className="h-3.5 w-3.5" /> network {derived.connReachable}/{derived.connTotal}
-                </span>
-                <span className={statusClass(updateStatusPill.level)}>
-                  <Download className="h-3.5 w-3.5" /> {updateStatusPill.text}
                 </span>
               </div>
             </div>
