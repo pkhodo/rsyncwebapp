@@ -1400,6 +1400,9 @@ export default function App() {
                 : rt.status === "completed"
                   ? "ok"
                   : "warn";
+          const progressDetail = isActiveStatus
+            ? rt.progress_line || "No progress output yet."
+            : rt.last_run_summary || rt.progress_line || "No progress output yet.";
           return (
             <article className="job-card" key={cfg.id}>
               <div className="flex items-start justify-between gap-3">
@@ -1485,7 +1488,7 @@ export default function App() {
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-black/20">
                 <div className="h-full bg-[var(--accent)] transition-all" style={{ width: `${progress}%` }} />
               </div>
-              <div className="mt-1 text-xs opacity-70">{rt.last_run_summary || rt.progress_line || "No progress output yet."}</div>
+              <div className="mt-1 text-xs opacity-70">{progressDetail}</div>
 
               <div className="mt-3 flex flex-wrap gap-2">
                 <button className="btn" disabled={busyMap[`job-start-live-${cfg.id}`] || isActiveStatus} onClick={() => runJobAction("start-live", cfg.id)} type="button">

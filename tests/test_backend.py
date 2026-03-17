@@ -103,6 +103,14 @@ class ValidationTests(unittest.TestCase):
 
 
 class CommandBuildTests(unittest.TestCase):
+    def test_prefers_progress2_without_per_file_progress(self):
+        cfg = server.JobConfig(**server.normalize_job_payload(_base_payload()))
+        job = server.JobControl(cfg, rsync_caps_provider=lambda: _caps(progress2=True))
+        cmd = job._build_command()
+        cmd_str = " ".join(cmd)
+        self.assertIn("--info=progress2", cmd_str)
+        self.assertNotIn("--progress", cmd_str)
+
     def test_falls_back_when_progress2_unavailable(self):
         cfg = server.JobConfig(**server.normalize_job_payload(_base_payload()))
         job = server.JobControl(cfg, rsync_caps_provider=lambda: _caps(progress2=False, append_verify=False))

@@ -824,7 +824,6 @@ class JobControl:
         cmd = [
             "rsync",
             "-avz",
-            "--progress",
             "--partial",
             f"--timeout={cfg.timeout_seconds}",
             "-e",
@@ -834,6 +833,8 @@ class JobControl:
             cmd.append("--human-readable")
         if supports.get("info") and supports.get("progress2"):
             cmd.append("--info=progress2")
+        elif supports.get("progress"):
+            cmd.append("--progress")
         if supports.get("append_verify"):
             cmd.append("--append-verify")
         if supports.get("contimeout"):
