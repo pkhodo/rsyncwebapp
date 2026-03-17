@@ -171,20 +171,22 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         let updateAvailable = (update["update_available"] as? Bool) ?? false
 
         if channel == "git" || channel == "github_commit" {
-            let branch = (update["branch"] as? String) ?? "main"
+            let branch = (update["target_branch"] as? String) ?? ((update["branch"] as? String) ?? "main")
             let localCommit = (update["local_commit"] as? String) ?? "unknown"
             let remoteCommit = (update["remote_commit"] as? String) ?? "unknown"
+            let currentBranch = (update["current_branch"] as? String) ?? ""
             let sourceLabel = channel == "git" ? "Git" : "GitHub API"
+            let branchDetail = currentBranch.isEmpty ? branch : "\(branch) (current: \(currentBranch))"
             if updateAvailable {
                 showUpdateAlert(
                     title: "Update Available",
-                    text: "\(sourceLabel) commit channel (\(branch)) has a newer commit.\nLocal: \(localCommit)\nRemote: \(remoteCommit)\nUse 'Update App' to pull latest changes.",
+                    text: "\(sourceLabel) commit channel (\(branchDetail)) has a newer commit.\nLocal: \(localCommit)\nRemote: \(remoteCommit)\nUse 'Update App' to pull latest changes.",
                     releaseURL: nil
                 )
             } else {
                 showUpdateAlert(
                     title: "Up To Date",
-                    text: "\(sourceLabel) commit channel (\(branch)) is up to date.\nCommit: \(localCommit)",
+                    text: "\(sourceLabel) commit channel (\(branchDetail)) is up to date.\nCommit: \(localCommit)",
                     releaseURL: nil
                 )
             }

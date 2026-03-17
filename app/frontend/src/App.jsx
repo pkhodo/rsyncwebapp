@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowUpDown,
+  Battery,
   Bot,
   Check,
   CirclePause,
@@ -26,6 +27,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Plug,
   RefreshCw,
   Server,
   Settings2,
@@ -47,6 +49,20 @@ const STORAGE_KEYS = {
 };
 
 const UPDATE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+const RETRY_POLICY_MULTIPLIERS = {
+  aggressive: 0.5,
+  normal: 1,
+  relaxed: 2,
+  conservative: 4,
+  off: 0,
+};
+const RETRY_POLICY_OPTIONS = [
+  { value: "aggressive", label: "Aggressive (x0.5)" },
+  { value: "normal", label: "Normal (x1)" },
+  { value: "relaxed", label: "Relaxed (x2)" },
+  { value: "conservative", label: "Conservative (x4)" },
+  { value: "off", label: "Off (disable retry)" },
+];
 
 const EMPTY_FORM = {
   id: "",
@@ -151,7 +167,21 @@ function formatRunDuration(startedAt, finishedAt) {
   const end = new Date(finishedAt).getTime();
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "-";
   const seconds = Math.round((end - start) / 1000);
-  return `${seconds}s`;
+  return formatSecondsCompact(seconds);
+}
+
+function formatSecondsCompact(totalSeconds) {
+  const seconds = Math.max(0, Math.round(Number(totalSeconds || 0)));
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins < 60) return secs ? `${mins}m ${secs}s` : `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hours < 24) return remMins ? `${hours}h ${remMins}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours ? `${days}d ${remHours}h` : `${days}d`;
 }
 
 function formatRelative(value) {
@@ -160,8 +190,26 @@ function formatRelative(value) {
   if (!Number.isFinite(at)) return "-";
   const delta = Math.round((at - Date.now()) / 1000);
   if (Math.abs(delta) < 2) return "now";
-  if (delta < 0) return `${Math.abs(delta)}s ago`;
-  return `in ${delta}s`;
+  if (delta < 0) return `${formatSecondsCompact(Math.abs(delta))} ago`;
+  return `in ${formatSecondsCompact(delta)}`;
+}
+
+function getRetryMultiplier(policy) {
+  return RETRY_POLICY_MULTIPLIERS[policy] ?? 1;
+}
+
+function retryPolicyLabel(policy) {
+  return (RETRY_POLICY_OPTIONS.find((item) => item.value === policy)?.label || "Normal (x1)").replace(/\s*\(.*\)\s*/, "");
+}
+
+function formatRetryCadence(initialRaw, maxRaw, policy) {
+  const initial = Math.max(1, Number(initialRaw || 10));
+  const retryMax = Math.max(initial, Number(maxRaw || 300));
+  const multiplier = Math.max(0, Number(getRetryMultiplier(policy)));
+  if (multiplier <= 0) return "disabled";
+  const effectiveInitial = Math.max(1, Math.round(initial * multiplier));
+  const effectiveMax = Math.max(effectiveInitial, Math.round(retryMax * multiplier));
+  return `${effectiveInitial}s -> ${effectiveMax}s`;
 }
 
 async function api(path, options = {}) {
@@ -234,6 +282,11 @@ export default function App() {
 
   const [jobs, setJobs] = useState([]);
   const [service, setService] = useState(null);
+  const [serviceSettingsDraft, setServiceSettingsDraft] = useState({
+    retry_policy_ac: "normal",
+    retry_policy_battery: "conservative",
+  });
+  const [serviceSettingsDirty, setServiceSettingsDirty] = useState(false);
   const [setup, setSetup] = useState(null);
   const [setupHealth, setSetupHealth] = useState(null);
   const [setupResult, setSetupResult] = useState(null);
@@ -264,6 +317,7 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [busyMap, setBusyMap] = useState({});
   const toastGateRef = useRef({});
+  const serviceSettingsDirtyRef = useRef(false);
 
   const [sectionsOpen, setSectionsOpen] = useState({
     overviewHealth: true,
@@ -406,6 +460,17 @@ export default function App() {
     return { text: "No update detected", level: "ok" };
   }, [updateInfo]);
 
+  const serviceSettings = service?.settings || {};
+  const power = service?.power || serviceSettings.power || {};
+  const powerSource = power?.source || "unknown";
+  const activeRetryPolicy = powerSource === "battery" ? (serviceSettings.retry_policy_battery || "conservative") : (serviceSettings.retry_policy_ac || "normal");
+  const powerText =
+    powerSource === "ac"
+      ? "plugged in"
+      : powerSource === "battery"
+        ? `battery${power?.percent != null ? ` ${power.percent}%` : ""}`
+        : "power unknown";
+
   const toggleSection = (key) => {
     setSectionsOpen((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -429,6 +494,13 @@ export default function App() {
   const loadService = async () => {
     const data = await api("/api/service/status");
     setService(data.service);
+    const settings = data.service?.settings || {};
+    if (!serviceSettingsDirtyRef.current) {
+      setServiceSettingsDraft({
+        retry_policy_ac: settings.retry_policy_ac || "normal",
+        retry_policy_battery: settings.retry_policy_battery || "conservative",
+      });
+    }
   };
 
   const loadSetup = async () => {
@@ -526,7 +598,7 @@ export default function App() {
       return;
     }
     if (data.update?.ok && (data.update?.channel === "git" || data.update?.channel === "github_commit")) {
-      addToast(`No newer commit on ${data.update?.branch || "main"}.`, "ok", 2400);
+      addToast(`No newer commit on ${data.update?.target_branch || data.update?.branch || "main"}.`, "ok", 2400);
       return;
     }
     addToast("Update check completed.", "ok", 2400);
@@ -536,7 +608,7 @@ export default function App() {
     const channel = updateInfo?.channel || "unknown";
     const detail =
       channel === "git" || channel === "github_commit"
-        ? `Commit channel ${updateInfo?.branch || "main"} · local ${updateInfo?.local_commit || "-"} · remote ${updateInfo?.remote_commit || "-"}`
+        ? `Commit channel ${updateInfo?.target_branch || updateInfo?.branch || "main"} · local ${updateInfo?.local_commit || "-"} · remote ${updateInfo?.remote_commit || "-"}${updateInfo?.current_branch ? ` · current ${updateInfo.current_branch}` : ""}`
         : `Release channel · current v${updateInfo?.current_version || "-"} · latest v${updateInfo?.latest_version || "-"}`;
     return (
       <section className={dense ? "rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3" : `${panelClass()}`}>
@@ -608,6 +680,10 @@ export default function App() {
     document.body.setAttribute("data-theme", theme === "fancy" ? "fancy" : "terminal");
     document.body.setAttribute("data-compact", compact === "1" ? "1" : "0");
   }, [theme, compact]);
+
+  useEffect(() => {
+    serviceSettingsDirtyRef.current = serviceSettingsDirty;
+  }, [serviceSettingsDirty]);
 
   useEffect(() => {
     refreshAllEvent();
@@ -692,6 +768,33 @@ export default function App() {
     } finally {
       setBusy(busyKey, false);
     }
+  };
+
+  const saveServiceSettings = async () => {
+    const busyKey = "save-service-settings";
+    setBusy(busyKey, true);
+    try {
+      const payload = {
+        retry_policy_ac: serviceSettingsDraft.retry_policy_ac || "normal",
+        retry_policy_battery: serviceSettingsDraft.retry_policy_battery || "conservative",
+      };
+      await api("/api/service/settings", { method: "POST", body: JSON.stringify(payload) });
+      setServiceSettingsDirty(false);
+      addToast("Retry and power policy saved", "ok");
+      await loadService();
+    } catch (error) {
+      addToast(error.message, "err", 6000);
+    } finally {
+      setBusy(busyKey, false);
+    }
+  };
+
+  const resetServiceSettingsDraft = () => {
+    setServiceSettingsDraft({
+      retry_policy_ac: service?.settings?.retry_policy_ac || "normal",
+      retry_policy_battery: service?.settings?.retry_policy_battery || "conservative",
+    });
+    setServiceSettingsDirty(false);
   };
 
   const runSetupAction = async (actionId) => {
@@ -1346,7 +1449,9 @@ export default function App() {
                   {cfg.dry_run ? <span className={statusClass("warn")}>default dry-run enabled</span> : null}
                 </div>
                 <div className="mt-2">
-                  retries <b>{rt.retries}</b> · auto-retry <b>{cfg.auto_retry ? "on" : "off"}</b>
+                  retries <b>{rt.retries}</b> · auto-retry <b>{cfg.auto_retry ? "on" : "off"}</b> · base{" "}
+                  <b>{formatRetryCadence(cfg.retry_initial_seconds, cfg.retry_max_seconds, "normal")}</b> · effective{" "}
+                  <b>{formatRetryCadence(cfg.retry_initial_seconds, cfg.retry_max_seconds, activeRetryPolicy)}</b> ({retryPolicyLabel(activeRetryPolicy)})
                 </div>
                 <div className="mt-1">
                   started {formatDate(rt.last_started_at)} ({formatRelative(rt.last_started_at)}) · finished{" "}
@@ -1356,6 +1461,17 @@ export default function App() {
                   next retry {rt.next_retry_at ? `${formatDate(rt.next_retry_at)} (${formatRelative(rt.next_retry_at)})` : "n/a"} · pid{" "}
                   {rt.pid ?? "-"}
                 </div>
+                {rt.current_file || (rt.recent_files || []).length ? (
+                  <div className="mt-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-2 text-xs">
+                    <div className="field-label">Active file stream</div>
+                    <div className="mono break-all">{rt.current_file || (rt.recent_files || []).slice(-1)[0] || "-"}</div>
+                    {(rt.recent_files || []).length > 1 ? (
+                      <div className="mt-1 opacity-75">
+                        recent: {(rt.recent_files || []).slice(-4).map((item) => shortPath(item, 80)).join(" · ")}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="mt-1">
                   last error {rt.last_error ? <span className="text-[var(--bad)]">{rt.last_error}</span> : "none"}
                 </div>
@@ -2042,6 +2158,12 @@ export default function App() {
             </label>
           ) : null}
         </div>
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-xs opacity-85">
+          Retry cadence for this job: <b>{formatRetryCadence(jobForm.retry_initial_seconds, jobForm.retry_max_seconds, "normal")}</b> with exponential backoff.
+          Effective now ({powerText}, {retryPolicyLabel(activeRetryPolicy)}):{" "}
+          <b>{formatRetryCadence(jobForm.retry_initial_seconds, jobForm.retry_max_seconds, activeRetryPolicy)}</b>.
+          {showAdvanced ? null : " Switch Builder to Advanced or Expert to edit retry initial/max seconds."}
+        </div>
         <p className="text-xs opacity-75">
           Job actions in Jobs are explicit: <b>Run Live</b> applies changes, <b>Run Dry-Run</b> simulates only.
         </p>
@@ -2119,6 +2241,66 @@ export default function App() {
       open={sectionsOpen.setupActions}
       onToggle={() => toggleSection("setupActions")}
     >
+      <div className="mb-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="font-semibold">Retry and Power Policy</div>
+          <span className={statusClass(powerSource === "unknown" ? "warn" : "ok")}>
+            {powerSource === "ac" ? <Plug className="h-3.5 w-3.5" /> : <Battery className="h-3.5 w-3.5" />}
+            {powerText}
+          </span>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label>
+            <span className="field-label">When plugged in (AC)</span>
+            <select
+              className="select"
+              onChange={(event) => {
+                setServiceSettingsDraft((prev) => ({ ...prev, retry_policy_ac: event.target.value }));
+                setServiceSettingsDirty(true);
+              }}
+              value={serviceSettingsDraft.retry_policy_ac}
+            >
+              {RETRY_POLICY_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className="field-label">When on battery</span>
+            <select
+              className="select"
+              onChange={(event) => {
+                setServiceSettingsDraft((prev) => ({ ...prev, retry_policy_battery: event.target.value }));
+                setServiceSettingsDirty(true);
+              }}
+              value={serviceSettingsDraft.retry_policy_battery}
+            >
+              {RETRY_POLICY_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="mt-2 text-xs opacity-80">
+          Auto-retry cadence remains per-job, then this policy scales it by power source. Current active policy:{" "}
+          <b>{retryPolicyLabel(activeRetryPolicy)}</b>.
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button className="btn" disabled={busyMap["save-service-settings"] || !serviceSettingsDirty} onClick={saveServiceSettings} type="button">
+            {busyMap["save-service-settings"] ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            Save Policy
+          </button>
+          <button className="btn btn-ghost" disabled={!serviceSettingsDirty} onClick={resetServiceSettingsDraft} type="button">
+            <X className="h-3.5 w-3.5" /> Reset
+          </button>
+          {serviceSettingsDirty ? <span className={statusClass("warn")}>Unsaved changes</span> : <span className={statusClass("ok")}>Saved</span>}
+        </div>
+      </div>
+
       <div className="mb-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="font-semibold">Setup Health</div>
@@ -2258,6 +2440,9 @@ export default function App() {
             <span className={statusClass(service?.service_pause ? "warn" : "ok")}>
               Auto-sync: {service?.service_pause ? "paused" : "active"}
             </span>
+            <span className={statusClass(powerSource === "unknown" ? "warn" : "ok")}>
+              Power: {powerText}
+            </span>
             <span className={statusClass(derived.connReachable === derived.connTotal ? "ok" : "warn")}>
               Connectivity: {derived.connReachable}/{derived.connTotal}
             </span>
@@ -2344,13 +2529,16 @@ export default function App() {
 
               <div className="flex flex-wrap gap-2 text-xs">
                 <span className={statusClass(service ? "ok" : "warn")}>
-                  <Cpu className="h-3.5 w-3.5" /> service {service ? `${service.uptime_seconds}s uptime` : "loading"}
+                  <Cpu className="h-3.5 w-3.5" /> service {service ? `${formatSecondsCompact(service.uptime_seconds)} uptime` : "loading"}
                 </span>
                 <span className={statusClass(service?.instances?.single_instance ? "ok" : "warn")}>
                   <Server className="h-3.5 w-3.5" /> instances {service?.instances?.count ?? "-"} on :{service?.port ?? 8787}
                 </span>
                 <span className={statusClass(service?.service_pause ? "warn" : "ok")}>
                   <HardDrive className="h-3.5 w-3.5" /> {service?.service_pause ? "auto-sync paused" : "auto-sync running"}
+                </span>
+                <span className={statusClass(powerSource === "unknown" ? "warn" : "ok")}>
+                  {powerSource === "ac" ? <Plug className="h-3.5 w-3.5" /> : <Battery className="h-3.5 w-3.5" />} {powerText} · {retryPolicyLabel(activeRetryPolicy)}
                 </span>
                 <span className={statusClass(derived.connReachable === derived.connTotal ? "ok" : "warn")}>
                   <Network className="h-3.5 w-3.5" /> network {derived.connReachable}/{derived.connTotal}

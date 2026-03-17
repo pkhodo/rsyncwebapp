@@ -195,6 +195,65 @@ class LifecycleReplayTests(unittest.TestCase):
                 self.assertEqual(job.runtime.retries, 1)
                 self.assertGreaterEqual(job.runtime.attempts, 2)
 
+    def test_battery_policy_off_disables_retry(self):
+        payload = _base_payload()
+        payload["retry_initial_seconds"] = 1
+        payload["retry_max_seconds"] = 2
+        cfg = server.JobConfig(**server.normalize_job_payload(payload))
+
+        with tempfile.TemporaryDirectory() as td:
+            log_dir = Path(td) / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            with patch.object(server, "LOG_DIR", log_dir):
+                job = server.JobControl(
+                    cfg,
+                    rsync_caps_provider=lambda: _caps(),
+                    service_pause_checker=lambda: False,
+                    retry_policy_provider=lambda: {
+                        "power_source": "battery",
+                        "policy": "off",
+                        "multiplier": 0.0,
+                    },
+                )
+                _FakePopen.scenarios = [
+                    {"exit_code": 255, "lines": ["ssh: connection timed out"]},
+                ]
+                with patch.object(server.subprocess, "Popen", _FakePopen):
+                    job._runner(force_dry_run=False)
+
+                self.assertEqual(job.runtime.status, "failed")
+                self.assertEqual(job.runtime.retries, 0)
+                self.assertIn("disabled while on battery", job.runtime.last_error.lower())
+
+    def test_tracks_current_and_recent_files(self):
+        payload = _base_payload()
+        cfg = server.JobConfig(**server.normalize_job_payload(payload))
+
+        with tempfile.TemporaryDirectory() as td:
+            log_dir = Path(td) / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            with patch.object(server, "LOG_DIR", log_dir):
+                job = server.JobControl(
+                    cfg,
+                    rsync_caps_provider=lambda: _caps(),
+                    service_pause_checker=lambda: False,
+                )
+                _FakePopen.scenarios = [
+                    {
+                        "exit_code": 0,
+                        "lines": [
+                            "sending incremental file list",
+                            "dir/example.pdf",
+                            "      75220 100%   15.53MB/s   00:00:00 (xfer#1, to-check=0/1)",
+                        ],
+                    }
+                ]
+                with patch.object(server.subprocess, "Popen", _FakePopen):
+                    job._runner(force_dry_run=False)
+
+                self.assertEqual(job.runtime.current_file, "dir/example.pdf")
+                self.assertIn("dir/example.pdf", job.runtime.recent_files)
+
 
 class LocationComposeTests(unittest.TestCase):
     def test_compose_matrix_preview(self):

@@ -12,10 +12,17 @@ if [ -d ".git" ] && command -v git >/dev/null 2>&1; then
     echo "Commit/stash your changes, then rerun update."
     exit 1
   fi
-  BRANCH="$(git branch --show-current 2>/dev/null || echo main)"
-  TARGET_BRANCH="${BRANCH:-main}"
+  CURRENT_BRANCH="$(git branch --show-current 2>/dev/null || true)"
+  TARGET_BRANCH="main"
   echo "Updating from origin/${TARGET_BRANCH}..."
-  git fetch --tags origin
+  git fetch --tags origin "${TARGET_BRANCH}"
+  if [ -z "${CURRENT_BRANCH}" ] || [ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]; then
+    if git show-ref --verify --quiet "refs/heads/${TARGET_BRANCH}"; then
+      git checkout "${TARGET_BRANCH}"
+    else
+      git checkout -b "${TARGET_BRANCH}" "origin/${TARGET_BRANCH}"
+    fi
+  fi
   git pull --ff-only origin "${TARGET_BRANCH}"
   if [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
     npm install --no-audit --no-fund >/dev/null 2>&1 || true

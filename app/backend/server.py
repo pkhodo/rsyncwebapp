@@ -121,6 +121,113 @@ def read_app_version() -> str:
 
 APP_VERSION = read_app_version()
 
+RETRY_POLICY_MULTIPLIERS: dict[str, float] = {
+    "aggressive": 0.5,
+    "normal": 1.0,
+    "relaxed": 2.0,
+    "conservative": 4.0,
+    "off": 0.0,
+}
+DEFAULT_SERVICE_SETTINGS = {
+    "service_pause": False,
+    "retry_policy_ac": "normal",
+    "retry_policy_battery": "conservative",
+}
+
+
+def _normalize_retry_policy(value: Any, fallback: str = "normal") -> str:
+    policy = str(value or "").strip().lower()
+    if policy in RETRY_POLICY_MULTIPLIERS:
+        return policy
+    return fallback
+
+
+def detect_power_state() -> dict[str, Any]:
+    system = platform.system().lower()
+    base = {
+        "source": "unknown",  # ac|battery|unknown
+        "percent": None,
+        "charging": None,
+        "platform": system,
+        "checked_at": now_iso(),
+        "detail": "",
+    }
+    try:
+        if system == "darwin" and shutil.which("pmset"):
+            proc = subprocess.run(
+                ["pmset", "-g", "batt"],
+                capture_output=True,
+                text=True,
+            )
+            output = (proc.stdout + "\n" + proc.stderr).strip()
+            lower = output.lower()
+            source = "unknown"
+            if "drawing from 'ac power'" in lower:
+                source = "ac"
+            elif "drawing from 'battery power'" in lower:
+                source = "battery"
+            percent_match = re.search(r"(\d+)%", output)
+            percent = int(percent_match.group(1)) if percent_match else None
+            charging: bool | None = None
+            if "charging;" in lower or " charged;" in lower:
+                charging = True
+            elif "discharging;" in lower:
+                charging = False
+            base.update(
+                {
+                    "source": source,
+                    "percent": percent,
+                    "charging": charging,
+                    "detail": output[:220],
+                }
+            )
+            return base
+
+        if system == "linux":
+            power_supply = Path("/sys/class/power_supply")
+            if power_supply.exists():
+                ac_online = False
+                battery_percent: int | None = None
+                battery_status = ""
+                has_battery = False
+                for item in power_supply.iterdir():
+                    if not item.is_dir():
+                        continue
+                    type_path = item / "type"
+                    if not type_path.exists():
+                        continue
+                    kind = type_path.read_text(encoding="utf-8", errors="ignore").strip().lower()
+                    if kind == "mains":
+                        online_path = item / "online"
+                        if online_path.exists():
+                            ac_online = online_path.read_text(encoding="utf-8", errors="ignore").strip() == "1"
+                    if kind == "battery":
+                        has_battery = True
+                        cap_path = item / "capacity"
+                        stat_path = item / "status"
+                        if cap_path.exists() and battery_percent is None:
+                            cap_raw = cap_path.read_text(encoding="utf-8", errors="ignore").strip()
+                            if cap_raw.isdigit():
+                                battery_percent = int(cap_raw)
+                        if stat_path.exists() and not battery_status:
+                            battery_status = stat_path.read_text(encoding="utf-8", errors="ignore").strip()
+                source = "ac" if ac_online else ("battery" if has_battery else "unknown")
+                charging: bool | None = None
+                if battery_status:
+                    charging = battery_status.lower() in {"charging", "full"}
+                base.update(
+                    {
+                        "source": source,
+                        "percent": battery_percent,
+                        "charging": charging,
+                        "detail": battery_status[:220],
+                    }
+                )
+                return base
+    except Exception as exc:  # noqa: BLE001
+        base["detail"] = f"power-detect error: {exc}"
+    return base
+
 
 def _version_tuple(value: str) -> tuple[int, int, int]:
     cleaned = value.strip().lstrip("vV")
@@ -494,6 +601,8 @@ class JobRuntime:
     last_run_type: str = ""  # live|dry-run
     last_run_summary: str = ""
     last_run_stats: dict[str, int] = field(default_factory=dict)
+    current_file: str = ""
+    recent_files: list[str] = field(default_factory=list)
 
 
 class JobControl:
@@ -525,12 +634,21 @@ class JobControl:
         history: HistoryStore | None = None,
         rsync_caps_provider: Callable[[], dict[str, Any]] | None = None,
         service_pause_checker: Callable[[], bool] | None = None,
+        retry_policy_provider: Callable[[], dict[str, Any]] | None = None,
     ):
         self.config = config
         self.history = history
         self.runtime = JobRuntime()
         self._rsync_caps_provider = rsync_caps_provider or detect_rsync_capabilities
         self._service_pause_checker = service_pause_checker or (lambda: False)
+        self._retry_policy_provider = retry_policy_provider or (
+            lambda: {
+                "power_source": "unknown",
+                "policy": "normal",
+                "multiplier": 1.0,
+                "label": "normal",
+            }
+        )
         self._lock = threading.Lock()
         self._cancel_requested = threading.Event()
         self._thread: threading.Thread | None = None
@@ -568,6 +686,58 @@ class JobControl:
             }:
                 raise RuntimeError("Cannot edit a running job")
             self.config = new_config
+
+    def _retry_profile(self) -> dict[str, Any]:
+        try:
+            raw = self._retry_policy_provider() or {}
+        except Exception:
+            raw = {}
+        policy = _normalize_retry_policy(raw.get("policy"), fallback="normal")
+        multiplier = float(raw.get("multiplier", RETRY_POLICY_MULTIPLIERS[policy]))
+        return {
+            "power_source": str(raw.get("power_source", "unknown")),
+            "policy": policy,
+            "multiplier": multiplier,
+            "label": str(raw.get("label", policy)),
+        }
+
+    def _effective_retry_window(self, base_initial: int, base_max: int) -> tuple[int, int, dict[str, Any]]:
+        profile = self._retry_profile()
+        multiplier = max(0.0, float(profile.get("multiplier", 1.0)))
+        if multiplier <= 0.0:
+            return (0, 0, profile)
+        initial = max(1, int(round(max(1, base_initial) * multiplier)))
+        retry_max = max(initial, int(round(max(base_max, base_initial) * multiplier)))
+        return (initial, retry_max, profile)
+
+    def _looks_like_file_line(self, line: str) -> bool:
+        text = line.strip()
+        if not text:
+            return False
+        lower = text.lower()
+        blocked_prefixes = (
+            "sending incremental file list",
+            "receiving incremental file list",
+            "sent ",
+            "total size is ",
+            "created directory ",
+            "skipping non-regular file ",
+            "rsync warning:",
+            "rsync error:",
+            "rsync:",
+            "delta-transmission",
+            "deleting ",
+            "./",
+        )
+        if any(lower.startswith(prefix) for prefix in blocked_prefixes):
+            return False
+        if self.PROGRESS_RE.search(text) or self.PROGRESS_FALLBACK_RE.search(text):
+            return False
+        if "xfer#" in lower and "to-check=" in lower:
+            return False
+        if "/" in text:
+            return True
+        return bool(re.search(r"\.[a-z0-9]{1,12}$", lower))
 
     def _write_log(self, line: str) -> None:
         timestamped = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {line}"
@@ -846,7 +1016,8 @@ class JobControl:
 
     def _runner(self, force_dry_run: bool = False, force_live: bool = False) -> None:
         cfg = self.config
-        delay = max(1, cfg.retry_initial_seconds)
+        delay = 0
+        policy_key = ""
         waiting_window_logged = False
         paused_logged = False
 
@@ -912,6 +1083,8 @@ class JobControl:
                 self.runtime.next_retry_at = None
                 self.runtime.progress_percent = 0.0
                 self.runtime.progress_line = ""
+                self.runtime.current_file = ""
+                self.runtime.recent_files = []
                 attempt = self.runtime.attempts
 
             run_id = None
@@ -963,6 +1136,13 @@ class JobControl:
                         with self._lock:
                             self.runtime.progress_percent = float(match.group("pct"))
                             self.runtime.progress_line = line
+                    if self._looks_like_file_line(line):
+                        with self._lock:
+                            self.runtime.current_file = line
+                            recent = list(self.runtime.recent_files)
+                            if not recent or recent[-1] != line:
+                                recent.append(line)
+                            self.runtime.recent_files = recent[-8:]
                     if self._cancel_requested.is_set():
                         break
 
@@ -1049,6 +1229,40 @@ class JobControl:
                 self._record_event("run", "failed", self.runtime.last_error)
                 return
 
+            retry_initial, retry_max, profile = self._effective_retry_window(
+                cfg.retry_initial_seconds,
+                cfg.retry_max_seconds,
+            )
+            source = str(profile.get("power_source", "unknown"))
+            policy = str(profile.get("policy", "normal"))
+            new_policy_key = f"{source}:{policy}:{retry_initial}:{retry_max}"
+
+            if retry_initial <= 0 or retry_max <= 0:
+                with self._lock:
+                    self.runtime.status = "failed"
+                    self.runtime.next_retry_at = None
+                    self.runtime.last_error = (
+                        f"Auto-retry disabled while on {source} power by service policy."
+                    )
+                self._write_log(self.runtime.last_error)
+                if run_id and self.history:
+                    self.history.finish_run(
+                        run_id=run_id,
+                        status="failed",
+                        exit_code=exit_code,
+                        bytes_line=self.runtime.progress_line,
+                        error=self.runtime.last_error,
+                        summary=summary,
+                    )
+                self._record_event("run", "failed", self.runtime.last_error)
+                return
+
+            if delay < 1 or policy_key != new_policy_key:
+                delay = retry_initial
+                policy_key = new_policy_key
+            else:
+                delay = max(retry_initial, min(delay, retry_max))
+
             # Wait for network recovery before retrying.
             with self._lock:
                 self.runtime.status = "waiting_network"
@@ -1063,12 +1277,12 @@ class JobControl:
                     summary=summary,
                 )
             self._write_log(
-                f"Network unavailable. Retrying in {delay}s (ZTNA/SSH check)."
+                f"Network unavailable. Retrying in {delay}s (ZTNA/SSH check, policy={policy}, power={source})."
             )
             self._record_event(
                 "network",
                 "waiting_network",
-                f"Retrying in {delay}s due to network/SSH interruption.",
+                f"Retrying in {delay}s due to network/SSH interruption (policy={policy}, power={source}).",
             )
 
             stop_at = time.time() + delay
@@ -1096,10 +1310,10 @@ class JobControl:
             if self._ssh_reachable():
                 self._write_log("SSH reachable again. Restarting job.")
                 self._record_event("network", "reachable", "SSH reachable. Retrying now.")
-                delay = max(1, cfg.retry_initial_seconds)
+                delay = retry_initial
                 continue
 
-            delay = min(delay * 2, max(delay, cfg.retry_max_seconds))
+            delay = min(delay * 2, max(delay, retry_max))
 
 
 class AppState:
@@ -1116,10 +1330,14 @@ class AppState:
             "local_locations": [],
         }
         self._service_pause = False
+        self._retry_policy_ac = "normal"
+        self._retry_policy_battery = "conservative"
         self._connectivity_lock = threading.Lock()
         self._connectivity_cache: dict[str, dict[str, Any]] = {}
         self._rsync_capabilities_cache: dict[str, Any] | None = None
         self._update_check_cache: dict[str, Any] | None = None
+        self._power_lock = threading.Lock()
+        self._power_cache: dict[str, Any] | None = None
         self._external_runtime_checked_at: float = 0.0
         self._restart_callback: Any = None
         self._stop_callback: Any = None
@@ -1189,17 +1407,38 @@ class AppState:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         if not SETTINGS_PATH.exists():
             SETTINGS_PATH.write_text(
-                json.dumps({"service_pause": False, "updated_at": now_iso()}, indent=2),
+                json.dumps({**DEFAULT_SERVICE_SETTINGS, "updated_at": now_iso()}, indent=2),
                 encoding="utf-8",
             )
-        payload = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-        self._service_pause = bool(payload.get("service_pause", False))
+        try:
+            payload = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                payload = {}
+        except Exception:
+            payload = {}
+        self._service_pause = bool(payload.get("service_pause", DEFAULT_SERVICE_SETTINGS["service_pause"]))
+        self._retry_policy_ac = _normalize_retry_policy(
+            payload.get("retry_policy_ac"),
+            fallback=DEFAULT_SERVICE_SETTINGS["retry_policy_ac"],
+        )
+        self._retry_policy_battery = _normalize_retry_policy(
+            payload.get("retry_policy_battery"),
+            fallback=DEFAULT_SERVICE_SETTINGS["retry_policy_battery"],
+        )
+        if (
+            payload.get("retry_policy_ac") != self._retry_policy_ac
+            or payload.get("retry_policy_battery") != self._retry_policy_battery
+            or "service_pause" not in payload
+        ):
+            self._save_settings()
 
     def _save_settings(self) -> None:
         SETTINGS_PATH.write_text(
             json.dumps(
                 {
                     "service_pause": self._service_pause,
+                    "retry_policy_ac": self._retry_policy_ac,
+                    "retry_policy_battery": self._retry_policy_battery,
                     "updated_at": now_iso(),
                 },
                 indent=2,
@@ -1223,6 +1462,7 @@ class AppState:
                 history=self.history,
                 rsync_caps_provider=self.get_rsync_capabilities,
                 service_pause_checker=self.is_service_paused,
+                retry_policy_provider=self.current_retry_policy,
             )
         with self._lock:
             self.jobs = loaded
@@ -1533,6 +1773,7 @@ class AppState:
                 history=self.history,
                 rsync_caps_provider=self.get_rsync_capabilities,
                 service_pause_checker=self.is_service_paused,
+                retry_policy_provider=self.current_retry_policy,
             )
         self._save_jobs()
         return self.get(cfg.id).serialize()
@@ -1567,11 +1808,80 @@ class AppState:
         with self._lock:
             return self._service_pause
 
+    def get_power_state(self, force: bool = False) -> dict[str, Any]:
+        with self._power_lock:
+            cached = dict(self._power_cache) if self._power_cache else None
+        if cached and not force:
+            checked = cached.get("checked_at")
+            if checked:
+                try:
+                    age = time.time() - datetime.fromisoformat(checked).timestamp()
+                    if age < 10:
+                        return cached
+                except Exception:
+                    pass
+        fresh = detect_power_state()
+        with self._power_lock:
+            self._power_cache = dict(fresh)
+        return fresh
+
+    def current_retry_policy(self) -> dict[str, Any]:
+        with self._lock:
+            ac_policy = self._retry_policy_ac
+            battery_policy = self._retry_policy_battery
+        power = self.get_power_state(force=False)
+        source = str(power.get("source", "unknown"))
+        if source == "battery":
+            policy = battery_policy
+            label = "battery"
+        else:
+            policy = ac_policy
+            label = "ac"
+        return {
+            "power_source": source,
+            "policy": policy,
+            "multiplier": RETRY_POLICY_MULTIPLIERS.get(policy, 1.0),
+            "label": label,
+        }
+
+    def service_settings(self) -> dict[str, Any]:
+        with self._lock:
+            paused = self._service_pause
+            ac_policy = self._retry_policy_ac
+            battery_policy = self._retry_policy_battery
+        power = self.get_power_state(force=False)
+        current = self.current_retry_policy()
+        return {
+            "service_pause": paused,
+            "retry_policy_ac": ac_policy,
+            "retry_policy_battery": battery_policy,
+            "current_policy": current,
+            "power": power,
+            "updated_at": now_iso(),
+        }
+
+    def set_service_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            if "service_pause" in payload:
+                self._service_pause = bool(payload.get("service_pause"))
+            if "retry_policy_ac" in payload:
+                self._retry_policy_ac = _normalize_retry_policy(
+                    payload.get("retry_policy_ac"),
+                    fallback=self._retry_policy_ac,
+                )
+            if "retry_policy_battery" in payload:
+                self._retry_policy_battery = _normalize_retry_policy(
+                    payload.get("retry_policy_battery"),
+                    fallback=self._retry_policy_battery,
+                )
+        self._save_settings()
+        return self.service_settings()
+
     def set_service_paused(self, paused: bool) -> dict[str, Any]:
         with self._lock:
             self._service_pause = bool(paused)
         self._save_settings()
-        return {"service_pause": self._service_pause, "updated_at": now_iso()}
+        return self.service_settings()
 
     def get_rsync_capabilities(self, force: bool = False) -> dict[str, Any]:
         with self._lock:
@@ -1703,6 +2013,9 @@ class AppState:
 
         git_branch_candidates: list[str] = []
         git_lookup_errors: list[str] = []
+        forced_branch = "main"
+        default_branch = ""
+        current_branch = ""
         local_sha = ""
         if (ROOT / ".git").exists():
             local_code, local_out = _run_capture(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
@@ -1736,6 +2049,15 @@ class AppState:
             elif symref_out.strip():
                 git_lookup_errors.append(symref_out.strip())
 
+            ordered_candidates: list[str] = []
+            for candidate in [forced_branch, "main", default_branch]:
+                if candidate and candidate not in ordered_candidates:
+                    ordered_candidates.append(candidate)
+            for candidate in git_branch_candidates:
+                if candidate and candidate not in ordered_candidates:
+                    ordered_candidates.append(candidate)
+            git_branch_candidates = ordered_candidates
+
             remote_sha = ""
             branch = ""
             for candidate in git_branch_candidates:
@@ -1755,6 +2077,9 @@ class AppState:
                         "ok": True,
                         "channel": "git",
                         "branch": branch or "main",
+                        "target_branch": branch or "main",
+                        "default_branch": default_branch or "main",
+                        "current_branch": current_branch or "",
                         "local_commit": local_sha[:10],
                         "remote_commit": remote_sha[:10],
                         "update_available": local_sha != remote_sha,
@@ -1788,6 +2113,9 @@ class AppState:
                         "ok": True,
                         "channel": "github_commit",
                         "branch": github_branch or "main",
+                        "target_branch": github_branch or "main",
+                        "default_branch": github_branch or "main",
+                        "current_branch": current_branch or "",
                         "local_commit": local_sha[:10],
                         "remote_commit": github_sha[:10],
                         "update_available": local_sha != github_sha,
@@ -1842,6 +2170,7 @@ class AppState:
             history=None,
             rsync_caps_provider=self.get_rsync_capabilities,
             service_pause_checker=self.is_service_paused,
+            retry_policy_provider=self.current_retry_policy,
         )
         command = probe._build_command(force_dry_run=False)
         return {
@@ -1923,13 +2252,16 @@ class AppState:
     def service_status(self) -> dict[str, Any]:
         started_dt = datetime.fromisoformat(self.started_at)
         uptime = int((datetime.now(tz=timezone.utc) - started_dt).total_seconds())
+        settings = self.service_settings()
         return {
             "pid": os.getpid(),
             "host": self.host,
             "port": self.port,
             "started_at": self.started_at,
             "uptime_seconds": uptime,
-            "service_pause": self.is_service_paused(),
+            "service_pause": settings["service_pause"],
+            "settings": settings,
+            "power": settings["power"],
             "instances": self._instance_summary(),
         }
 
@@ -2639,14 +2971,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
             self._send_json({"ok": True, "service": self.app_state.service_status()})
             return
         if path == "/api/service/settings":
-            self._send_json(
-                {
-                    "ok": True,
-                    "settings": {
-                        "service_pause": self.app_state.is_service_paused(),
-                    },
-                }
-            )
+            self._send_json({"ok": True, "settings": self.app_state.service_settings()})
             return
         if path == "/api/system/checks":
             self._send_json({"ok": True, "checks": self.app_state.system_checks()})
@@ -2748,6 +3073,11 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 payload = self._read_json()
                 result = self.app_state.compose_locations(payload)
                 self._send_json({"ok": True, "result": result}, status=200)
+                return
+            if path == "/api/service/settings":
+                payload = self._read_json()
+                result = self.app_state.set_service_settings(payload)
+                self._send_json({"ok": True, "settings": result})
                 return
             if path == "/api/service/pause-auto":
                 result = self.app_state.set_service_paused(True)

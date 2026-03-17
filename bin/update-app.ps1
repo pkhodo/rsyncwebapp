@@ -10,11 +10,19 @@ if ((Test-Path ".git") -and (Get-Command git -ErrorAction SilentlyContinue)) {
   if ($dirty) {
     throw "Working tree has uncommitted changes. Commit/stash first, then rerun update."
   }
-  $branch = git branch --show-current
-  if (-not $branch) { $branch = "main" }
-  Write-Host "Updating from origin/$branch..."
-  git fetch --tags origin
-  git pull --ff-only origin $branch
+  $currentBranch = (git branch --show-current).Trim()
+  $targetBranch = "main"
+  Write-Host "Updating from origin/$targetBranch..."
+  git fetch --tags origin $targetBranch
+  if (-not $currentBranch -or $currentBranch -ne $targetBranch) {
+    git show-ref --verify --quiet "refs/heads/$targetBranch"
+    if ($LASTEXITCODE -eq 0) {
+      git checkout $targetBranch
+    } else {
+      git checkout -b $targetBranch "origin/$targetBranch"
+    }
+  }
+  git pull --ff-only origin $targetBranch
   if ((Test-Path "package.json") -and (Get-Command npm -ErrorAction SilentlyContinue)) {
     npm install --no-audit --no-fund | Out-Null
   }
