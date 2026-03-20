@@ -7,7 +7,7 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PORT="${RSYNC_WEBAPP_PORT:-8787}"
+PORT="$("${ROOT_DIR}/bin/resolve-ui-port.sh")"
 SYSTEMD_DIR="${HOME}/.config/systemd/user"
 SERVICE_FILE="${SYSTEMD_DIR}/rsync-webapp.service"
 
@@ -27,8 +27,7 @@ After=network.target
 Type=simple
 WorkingDirectory=${ROOT_DIR}
 Environment=RSYNC_WEBAPP_HOST=127.0.0.1
-Environment=RSYNC_WEBAPP_PORT=${PORT}
-ExecStart=/usr/bin/env python3 app/backend/server.py
+ExecStart=${ROOT_DIR}/bin/run-ui-service.sh
 Restart=always
 RestartSec=3
 StandardOutput=append:${ROOT_DIR}/state/logs/systemd.out.log

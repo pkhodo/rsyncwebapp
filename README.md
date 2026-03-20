@@ -25,12 +25,12 @@ cd rsyncwebapp
 ./bin/quickstart.sh
 ```
 
-3. Open `http://rsync.localhost:8787`
+3. Open the URL shown by `./bin/start-ui.sh` (usually `http://rsync.localhost:8787`)
 4. In the UI, complete **First-Run Wizard** and optionally define reusable profiles in **Locations** before creating jobs.
 
 ## Highlights
 
-- Browser UI at `http://rsync.localhost:8787`
+- Browser UI at `http://rsync.localhost:<port>` (defaults to `8787`, auto-falls back when occupied)
 - Frontend stack: React + Vite + Tailwind CSS + Lucide icons
 - Multi-screen console layout:
   - Overview
@@ -126,6 +126,7 @@ For a no-terminal workflow on macOS:
 3. Use the `rsync.wa` menu bar item for:
    - Open UI
    - Start / Stop / Restart service
+   - Reinstall LaunchAgent
    - Status check
 
 Remove menu bar later:
@@ -159,6 +160,8 @@ Desktop shortcuts:
 ```bash
 ./bin/install-desktop-shortcuts.sh
 ```
+
+This now includes `Rsync Web App Reinstall LaunchAgent.command` for one-click LaunchAgent repair/update.
 
 ## Documentation
 

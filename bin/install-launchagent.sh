@@ -9,7 +9,10 @@ fi
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 AGENT_LABEL="local.rsyncwebapp.control"
 AGENT_FILE="${HOME}/Library/LaunchAgents/${AGENT_LABEL}.plist"
-PORT="${RSYNC_WEBAPP_PORT:-8787}"
+PORT="$("${ROOT_DIR}/bin/resolve-ui-port.sh")"
+LOG_DIR="${ROOT_DIR}/state/logs"
+
+mkdir -p "${LOG_DIR}"
 
 cat > "${AGENT_FILE}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -22,16 +25,13 @@ cat > "${AGENT_FILE}" <<EOF
     <string>${ROOT_DIR}</string>
     <key>ProgramArguments</key>
     <array>
-      <string>/usr/bin/env</string>
-      <string>python3</string>
-      <string>app/backend/server.py</string>
+      <string>/bin/bash</string>
+      <string>${ROOT_DIR}/bin/run-ui-service.sh</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
       <key>RSYNC_WEBAPP_HOST</key>
       <string>127.0.0.1</string>
-      <key>RSYNC_WEBAPP_PORT</key>
-      <string>${PORT}</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

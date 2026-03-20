@@ -9,7 +9,7 @@ fi
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DESKTOP_DIR="${HOME}/Desktop"
 APP_DIR="${HOME}/.local/share/applications"
-PORT="${RSYNC_WEBAPP_PORT:-8787}"
+PORT="$("${ROOT_DIR}/bin/resolve-ui-port.sh")"
 
 mkdir -p "${DESKTOP_DIR}" "${APP_DIR}"
 

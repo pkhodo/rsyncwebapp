@@ -21,8 +21,10 @@ npm run build:frontend
 4. Open:
 
 ```bash
-http://rsync.localhost:8787
+http://rsync.localhost:<port>
 ```
+
+Use the URL printed by `./bin/start-ui.sh` (`8787` by default, auto-fallback if occupied).
 
 Optional live frontend dev (with API proxy to `127.0.0.1:8787`):
 

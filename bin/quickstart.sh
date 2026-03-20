@@ -24,4 +24,5 @@ fi
 "${ROOT_DIR}/bin/start-ui.sh"
 "${ROOT_DIR}/bin/open-ui.sh"
 
-echo "Done. Open http://rsync.localhost:8787"
+PORT="$("${ROOT_DIR}/bin/resolve-ui-port.sh")"
+echo "Done. Open http://rsync.localhost:${PORT}"

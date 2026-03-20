@@ -2461,7 +2461,7 @@ export default function App() {
                 <div>
                   <h2 className="text-xl font-semibold tracking-tight">Rsync Ops Console</h2>
                   <p className="text-sm opacity-80">High-signal dashboard for resilient sync with pause/retry behavior.</p>
-                  <div className="mt-1 text-xs opacity-70">URL: http://rsync.localhost:8787</div>
+                  <div className="mt-1 text-xs opacity-70">URL: http://rsync.localhost:{service?.port ?? 8787}</div>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button className="btn" onClick={() => refreshAll().catch((e) => addToast(e.message, "err"))} type="button">

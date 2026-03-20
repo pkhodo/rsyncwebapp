@@ -11,6 +11,7 @@ DESKTOP_DIR="${HOME}/Desktop"
 rm -f \
   "${DESKTOP_DIR}/Rsync Web App Start.command" \
   "${DESKTOP_DIR}/Rsync Web App Stop.command" \
-  "${DESKTOP_DIR}/Rsync Web App Status.command"
+  "${DESKTOP_DIR}/Rsync Web App Status.command" \
+  "${DESKTOP_DIR}/Rsync Web App Reinstall LaunchAgent.command"
 
 echo "Removed Rsync Web App desktop shortcuts from ${DESKTOP_DIR}"

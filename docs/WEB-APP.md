@@ -8,6 +8,8 @@ Default URL:
 http://rsync.localhost:8787
 ```
 
+If `8787` is occupied, the app auto-selects another free local port and prints it in `./bin/start-ui.sh` output.
+
 ## Navigation Areas
 
 - Overview
@@ -77,6 +79,8 @@ macOS desktop shortcuts:
 ```bash
 ./bin/install-desktop-shortcuts.sh
 ```
+
+Desktop shortcuts include a one-click `Reinstall LaunchAgent` command.
 
 Linux autostart (systemd user service):
 

@@ -3,7 +3,7 @@ import Foundation
 
 final class MenuBarController: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private let uiURL = URL(string: "http://rsync.localhost:8787")!
+    private let defaultPort = 8787
     private let releasesURL = URL(string: "https://github.com/pkhodo/rsyncwebapp/releases/latest")!
     private let repoPath: String
 
@@ -54,6 +54,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         menu.addItem(makeMenuItem(title: "Start Service", action: #selector(startService), keyEquivalent: "s", symbol: "play.fill"))
         menu.addItem(makeMenuItem(title: "Stop Service", action: #selector(stopService), keyEquivalent: "x", symbol: "stop.fill"))
         menu.addItem(makeMenuItem(title: "Restart Service", action: #selector(restartService), keyEquivalent: "r", symbol: "arrow.clockwise"))
+        menu.addItem(makeMenuItem(title: "Reinstall LaunchAgent", action: #selector(reinstallLaunchAgent), keyEquivalent: "l", symbol: "arrow.triangle.2.circlepath"))
         menu.addItem(makeMenuItem(title: "Status", action: #selector(showStatus), keyEquivalent: "i", symbol: "info.circle"))
         menu.addItem(.separator())
         menu.addItem(makeMenuItem(title: "Check Updates", action: #selector(checkUpdates), keyEquivalent: "u", symbol: "arrow.triangle.2.circlepath"))
@@ -106,9 +107,25 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func activePort() -> Int {
+        let portFile = URL(fileURLWithPath: repoPath).appendingPathComponent("state/ui-port")
+        guard
+            let raw = try? String(contentsOf: portFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+            let value = Int(raw),
+            (1...65535).contains(value)
+        else {
+            return defaultPort
+        }
+        return value
+    }
+
+    private func uiURL() -> URL {
+        return URL(string: "http://rsync.localhost:\(activePort())")!
+    }
+
     @objc private func openUI() {
         _ = runShell("cd \(repoPath.escapedShell) && ./bin/start-ui.sh")
-        NSWorkspace.shared.open(uiURL)
+        NSWorkspace.shared.open(uiURL())
     }
 
     @objc private func startService() {
@@ -127,17 +144,23 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         showAlert("Restart Service", result.1.isEmpty ? "Exit code: \(result.0)" : result.1)
     }
 
+    @objc private func reinstallLaunchAgent() {
+        let result = runShell("cd \(repoPath.escapedShell) && ./bin/install-launchagent.sh")
+        showAlert("Reinstall LaunchAgent", result.1.isEmpty ? "Exit code: \(result.0)" : result.1)
+    }
+
     @objc private func showStatus() {
         let result = runShell("cd \(repoPath.escapedShell) && ./bin/status-ui.sh")
         showAlert("Rsync Web App Status", result.1.isEmpty ? "Exit code: \(result.0)" : result.1)
     }
 
     @objc private func checkUpdates() {
-        let result = runShell("curl -fsS --max-time 8 http://127.0.0.1:8787/api/app/update-check?force=1")
+        let port = activePort()
+        let result = runShell("curl -fsS --max-time 8 http://127.0.0.1:\(port)/api/app/update-check?force=1")
         if result.0 != 0 || result.1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             showUpdateAlert(
                 title: "Check Updates",
-                text: "Could not reach the local service on port 8787.\nStart the service first, then retry.",
+                text: "Could not reach the local service on port \(port).\nStart the service first, then retry.",
                 releaseURL: releasesURL
             )
             return

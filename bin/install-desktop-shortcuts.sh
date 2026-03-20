@@ -32,12 +32,22 @@ read -n 1 -s -r -p "Press any key to close..."
 echo
 EOF
 
+cat > "${DESKTOP_DIR}/Rsync Web App Reinstall LaunchAgent.command" <<EOF
+#!/usr/bin/env bash
+cd "${ROOT_DIR}"
+./bin/install-launchagent.sh
+read -n 1 -s -r -p "Press any key to close..."
+echo
+EOF
+
 chmod +x \
   "${DESKTOP_DIR}/Rsync Web App Start.command" \
   "${DESKTOP_DIR}/Rsync Web App Stop.command" \
-  "${DESKTOP_DIR}/Rsync Web App Status.command"
+  "${DESKTOP_DIR}/Rsync Web App Status.command" \
+  "${DESKTOP_DIR}/Rsync Web App Reinstall LaunchAgent.command"
 
 echo "Installed desktop shortcuts:"
 echo "  - ${DESKTOP_DIR}/Rsync Web App Start.command"
 echo "  - ${DESKTOP_DIR}/Rsync Web App Stop.command"
 echo "  - ${DESKTOP_DIR}/Rsync Web App Status.command"
+echo "  - ${DESKTOP_DIR}/Rsync Web App Reinstall LaunchAgent.command"

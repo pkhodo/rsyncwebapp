@@ -24,8 +24,10 @@ cd rsyncwebapp
 3. Open:
 
 ```text
-http://rsync.localhost:8787
+http://rsync.localhost:<port>
 ```
+
+`8787` is the default. If it is busy, startup auto-selects another free local port.
 
 ## Documentation Map
 

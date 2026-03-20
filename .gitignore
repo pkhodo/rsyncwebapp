@@ -3,6 +3,7 @@ state/logs/
 state/*.pid
 state/*.db
 state/*.json
+state/ui-port
 
 # Local user configuration
 profiles/jobs.json

@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PORT="${RSYNC_WEBAPP_PORT:-8787}"
 
 "${ROOT_DIR}/bin/start-ui.sh"
 
+PORT="$("${ROOT_DIR}/bin/resolve-ui-port.sh")"
 URL="http://rsync.localhost:${PORT}"
 echo "Opening ${URL}"
 
